@@ -6,6 +6,7 @@ import water.fvec.Frame;
 import water.fvec.Vec;
 import water.nbhm.UtilUnsafe;
 import water.util.ArrayUtils;
+import water.util.Log;
 import water.util.MathUtils;
 
 /** A Histogram, computed in parallel over a Vec.
@@ -139,7 +140,7 @@ public abstract class DHistogram<TDH extends DHistogram> extends Iced {
       setMin(col_data);
       setMax(col_data);
     }
-    if( y != 0 ) incr0(b,y,w);
+    if( y != 0 && w != 0) incr0(b,y,w);
   }
 
   // Merge two equal histograms together.  Done in a F/J reduce, so no
@@ -172,7 +173,7 @@ public abstract class DHistogram<TDH extends DHistogram> extends Iced {
   // Score is the sum of the MSEs when the data is split at a single point.
   // mses[1] == MSE for splitting between bins  0  and 1.
   // mses[n] == MSE for splitting between bins n-1 and n.
-  abstract public DTree.Split scoreMSE( int col, int min_rows );
+  abstract public DTree.Split scoreMSE( int col, double min_rows );
 
   // The initial histogram bins are setup from the Vec rollups.
   static public DHistogram[] initialHist(Frame fr, int ncols, int nbins, int nbins_cats, DHistogram hs[]) {
@@ -199,11 +200,17 @@ public abstract class DHistogram<TDH extends DHistogram> extends Iced {
     double m = Double.NaN;
     for( int b=0; b<_bins.length; b++ ) {
       if( _bins[b] == 0 ) continue;
-      if( var(b) > 1e-6 ) return false;
+      if( var(b) > 1e-6 ) {
+        Log.warn("Response should be constant, but variance of bin " + b + " (out of " + _bins.length + ") is " + var(b));
+        return false;
+      }
       double mean = mean(b);
       if( mean != m )
         if( Double.isNaN(m) ) m=mean; // Capture mean of first non-empty bin
-        else if( !MathUtils.compare(m,mean,1e-6,1e-6) ) return false;
+        else if( !MathUtils.compare(m,mean,1e-6,1e-6) ) {
+          Log.warn("Response should be constant, but mean of first non-empty bin is " + m + ", but another bin (" + b + ") has mean(b) = " + mean);
+          return false;
+        }
     }
     return true;
   }

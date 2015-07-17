@@ -882,14 +882,10 @@ h2o.subset <- function(x, subset, select, drop = FALSE, ...) {
     cols <- eval(substitute(select), env, parent.frame())
   }
 
-  if (missingSubset && missingSelect)
-    x
-  else if (missingSelect)
-    x[rows,]
-  else if (missingSubset)
-    x[,cols]
-  else
-    x[rows, cols]
+  if (missingSubset && missingSelect) x
+  else if (missingSelect)             x[rows,]
+  else if (missingSubset)             x[,cols]
+  else                                x[rows, cols]
 }
 
 #' @export
@@ -1377,6 +1373,17 @@ setMethod("is.factor", "H2OFrame", function(x) {
 })
 
 #'
+#' Is H2O Data Frame column numeric
+#'
+#' @param x an \linkS4class{H2OFrame} object column.
+#' @return Returns logical value.
+#' @export
+setMethod("is.numeric", "H2OFrame", function(x) {
+  if( ncol(x)==1 ) .h2o.unary_scalar_op("is.numeric", x)
+  else             .h2o.unary_frame_op("is.numeric", x )
+})
+
+#'
 #' Quantiles of H2O Data Frame.
 #'
 #' Obtain and display quantiles for H2O parsed data.
@@ -1753,12 +1760,8 @@ as.data.frame.H2OFrame <- function(x, ...) {
   # Versions of R including 3.1 and later should use hex string.
   use_hex_string <- getRversion() >= "3.1"
 
-  url <- paste0('http://', x@conn@ip, ':', x@conn@port,
-                '/3/DownloadDataset',
-                '?frame_id=', URLencode(x@frame_id),
-                '&hex_string=', as.numeric(use_hex_string))
-
-  ttt <- getURL(url)
+  urlSuffix = sprintf("DownloadDataset?frame_id=%s&hex_string=%d", URLencode(x@frame_id), as.numeric(use_hex_string))
+  ttt <- .h2o.doSafeGET(x@conn, urlSuffix = urlSuffix)
   n <- nchar(ttt)
 
   # Delete last 1 or 2 characters if it's a newline.
@@ -2390,8 +2393,72 @@ h2o.impute <- function(data, column, method=c("mean","median","mode"), # TODO: a
   }
 }
 
+#'
+#' Cumulative Sum
+#'
+#' Obtain the cumulative sum of a column.
+#'
+#' @param x An \linkS4class{H2OFrame} object.
+#' @examples
+#' localH2O <- h2o.init()
+#' fr <- as.h2o(iris)
+#' h2o.cumsum(fr[,1])
+#' @export
+h2o.cumsum <- function(x) .h2o.nary_frame_op("cumsum", x)
 
-h2o.which <- function(x) { .h2o.nary_frame_op("h2o.which", x) }
+#'
+#' Cumulative Product
+#'
+#' Obtain the cumulative product of a column.
+#'
+#' @param x An \linkS4class{H2OFrame} object.
+#' @examples
+#' localH2O <- h2o.init()
+#' fr <- as.h2o(iris)
+#' h2o.cumprod(fr[,1])
+#' @export
+h2o.cumprod <- function(x) .h2o.nary_frame_op("cumprod", x)
+
+#'
+#' Cumulative Min
+#'
+#' Obtain the cumulative min of a column.
+#'
+#' @param x An \linkS4class{H2OFrame} object.
+#' @examples
+#' localH2O <- h2o.init()
+#' fr <- as.h2o(iris)
+#' h2o.cummin(fr[,1])
+#' @export
+h2o.cummin <- function(x) .h2o.nary_frame_op("cummin", x)
+
+#'
+#' Cumulative Max
+#'
+#' Obtain the cumulative max of a column.
+#'
+#' @param x An \linkS4class{H2OFrame} object.
+#' @examples
+#' localH2O <- h2o.init()
+#' fr <- as.h2o(iris)
+#' h2o.cummax(fr[,1])
+#' @export
+h2o.cummax <- function(x) .h2o.nary_frame_op("cummax", x)
+
+#'
+#' H2O Which
+#'
+#' 1-based indices similar to R's which
+#'
+#' @param x An \linkS4class{H2OFrame} object.
+#' @examples
+#' localH2O <- h2o.init()
+#' fr <- as.h2o(iris)
+#' h2o.which(fr[,5] == "setosa")
+#' @export
+h2o.which <- function(x) { .h2o.nary_frame_op("h2o.which", x, TRUE) }
+
+
 h2o.which.max <- function(x)  { .h2o.nary_frame_op("h2o.which.max", x) }
 h2o.vote  <- function(x, nclasses, weights=rep(0,ncol(x))) { .h2o.nary_frame_op("h2o.vote", x, nclasses, weights) }
 #-----------------------------------------------------------------------------------------------------------------------
@@ -2514,18 +2581,10 @@ h2o.ddply <- function (.data, .variables, .fun = NULL, ..., .progress = 'none') 
 #
 #`.` <- `h2o..`
 #
-#h2o.unique <- function(x, incomparables = FALSE, ...) {
-#  # NB: we do nothing with incomparables right now
-#  # NB: we only support MARGIN = 2 (which is the default)
-#
-#  if(!class(x) %in% c('H2OFrame', 'H2OFrame', 'H2OFrame')) stop('h2o.unique: x is of the wrong type. Got: ', class(x))
-##  if( nrow(x) == 0 | ncol(x) == 0) return(NULL) #TODO: Do this on the back end.
-##  if( nrow(x) == 1) return(x)  #TODO: Do this on the back end.
-#
-#  args <- list(...)
-#  if( 'MARGIN' %in% names(args) && args[['MARGIN']] != 2 ) stop('h2o unique: only MARGIN 2 supported')
-#  .h2o.unary_op("unique", x)
-#}
+h2o.unique <- function(x) {
+  if( !is(x, "H2OFrame") ) stop('h2o.unique: x is of the wrong type. Got: ', class(x))
+  .h2o.nary_frame_op("unique", x)
+}
 #unique.H2OFrame <- h2o.unique
 
 
@@ -2711,8 +2770,8 @@ h2o.hist <- function(x, breaks="Sturges", plot=TRUE) {
     if( breaks=="Scott"   ) breaks <- "scott"
   }
   h <- as.data.frame(.h2o.nary_frame_op("hist", x, breaks))
-  counts <- na.omit(h[,2])
-  mids <- na.omit(h[,4])
+  counts <- stats::na.omit(h[,2])
+  mids <- stats::na.omit(h[,4])
   histo <- list()
   histo$breaks <- h$breaks
   histo$counts <- as.numeric(counts)

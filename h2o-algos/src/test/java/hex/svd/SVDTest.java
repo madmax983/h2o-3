@@ -43,6 +43,7 @@ public class SVDTest extends TestUtil {
       parms._nv = 4;
       parms._seed = 1234;
       parms._only_v = false;
+      parms._transform = DataInfo.TransformType.NONE;
 
       SVD job = new SVD(parms);
       try {
@@ -83,6 +84,7 @@ public class SVDTest extends TestUtil {
       parms._nv = 4;
       parms._seed = 1234;
       parms._only_v = true;
+      parms._transform = DataInfo.TransformType.NONE;
 
       SVD job = new SVD(parms);
       try {
@@ -122,6 +124,7 @@ public class SVDTest extends TestUtil {
       parms._transform = DataInfo.TransformType.NONE;
       parms._only_v = false;
       parms._keep_u = false;
+      parms._transform = DataInfo.TransformType.NONE;
 
       try {
         job = new SVD(parms);
@@ -219,6 +222,7 @@ public class SVDTest extends TestUtil {
       parms._nv = 7;
       parms._use_all_factor_levels = true;
       parms._only_v = false;
+      parms._transform = DataInfo.TransformType.NONE;
 
       SVD job = new SVD(parms);
       try {
@@ -297,10 +301,9 @@ public class SVDTest extends TestUtil {
     }
   }
 
-  @Test public void testUpdateGram() {
+  @Test public void testIVVSum() {
     double[][] res = ard(ard(1, 2, 3), ard(2, 5, 6), ard(3, 6, 9));
     double[] v = new double[] {7, 8, 9};
-
     double[][] xvv = ard(ard(-48, -54, -60), ard(-54, -59, -66), ard(-60, -66, -72));
 
     SVD.updateIVVSum(res, v);

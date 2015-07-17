@@ -7,9 +7,9 @@ import water.fvec.Chunk;
 import water.fvec.Frame;
 import water.fvec.NewChunk;
 import water.fvec.Vec;
-import water.nbhm.NonBlockingHashMap;
 import water.nbhm.NonBlockingHashSet;
 import water.nbhm.UtilUnsafe;
+import water.util.IcedHashMap;
 import water.util.Log;
 
 import java.util.*;
@@ -219,42 +219,13 @@ import java.util.concurrent.atomic.AtomicInteger;
     @Override public Iterator<T> iterator() {return _g.iterator(); }
   }
 
-  // custom serializer for <Group,Int> pairs
-  public static class IcedHM<G extends Iced,S extends String> extends Iced {
-    private NonBlockingHashMap<G,String> _m; // the nbhm to (de)ser
-    IcedHM() { _m = new NonBlockingHashMap<>(); }
-    String putIfAbsent(G k, S v) { return _m.putIfAbsent(k,v);}
-    void put(G g, S i) { _m.put(g,i);}
-    void putAll(IcedHM<G,S> m) {_m.putAll(m._m);}
-    Set<G> keySet() { return _m.keySet(); }
-    int size() { return _m.size(); }
-    String get(G g) { return _m.get(g); }
-    G getk(G g) { return _m.getk(g); }
-    @Override public AutoBuffer write_impl(AutoBuffer ab) {
-      if( _m==null || _m.size()==0 ) return ab.put4(0);
-      else {
-        ab.put4(_m.size());
-        for(G g:_m.keySet()) { ab.put(g); ab.putStr(_m.get(g)); }
-      }
-      return ab;
-    }
-    @Override public IcedHM read_impl(AutoBuffer ab) {
-      int mLen;
-      if( (mLen=ab.get4())!=0 ) {
-        _m = new NonBlockingHashMap<>();
-        for( int i=0;i<mLen;++i ) _m.put((G)ab.get(), ab.getStr());
-      }
-      return this;
-    }
-  }
-
   public static class GBTask extends MRTask<GBTask> {
-    IcedHM<G,String> _g;  // lol GString
+    IcedHashMap<G,String> _g;
     private long[] _gbCols;
     private AGG[] _agg;
     GBTask(long[] gbCols, AGG[] agg) { _gbCols=gbCols; _agg=agg; }
-    @Override public void setupLocal() { _g = new IcedHM<>(); }
     @Override public void map(Chunk[] c) {
+      _g = new IcedHashMap<>();
       long start = c[0].start();
       byte[] naMethods = AGG.naMethods(_agg);
       G g = new G(_gbCols.length,_agg.length,naMethods);
@@ -265,11 +236,7 @@ import java.util.concurrent.atomic.AtomicInteger;
         if( g_old==null ) {  // won the race w/ this group
           gOld=g;
           g=new G(_gbCols.length,_agg.length,naMethods); // need entirely new G
-        } else {
-          gOld=_g.getk(g);
-          if( gOld==null )   // FIXME: Why is gOld null!?
-            while( gOld==null ) gOld=_g.getk(g);
-        }
+        } else gOld=_g.getk(g);
         // cas in COUNT
         long r=gOld._N;
         while(!G.CAS_N(gOld, r, r + 1))
@@ -279,8 +246,8 @@ import java.util.concurrent.atomic.AtomicInteger;
     }
     @Override public void reduce(GBTask t) {
       if( _g!=t._g ) {
-        IcedHM<G,String> l = _g;
-        IcedHM<G,String> r = t._g;
+        IcedHashMap<G,String> l = _g;
+        IcedHashMap<G,String> r = t._g;
         if( l.size() < r.size() ) { l=r; r=_g; }  // larger on the left
         // loop over the smaller set of grps
         for( G rg:r.keySet() ) {
@@ -315,13 +282,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
         if( (type=agg[i]._type) == AGG.T_N ) continue; //immediate short circuit if COUNT
 
-        // Do NA handling here for AGG.T_IG and AGG.T_RM
         if( c!= null )
           if( !agg[i].isAll() && c[col].isNA(chkRow) )
             continue;
 
         // build up a long[] of vals, to handle the case when c is and isn't null.
-        // c is null in the reduce  of the MRTask
         long bits=-1;
         if( c!=null ) {
           if( c[col].isNA(chkRow) ) continue;
@@ -489,10 +454,11 @@ import java.util.concurrent.atomic.AtomicInteger;
     // compare 2 groups
     // iterate down _ds, stop when _ds[i] > that._ds[i], or _ds[i] < that._ds[i]
     // order by various columns specified by _orderByCols
+    // NaN is treated as least
     @Override public int compareTo(G g) {
       for(int i:_orderByCols)
-        if( _ds[i] < g._ds[i] ) return -1;
-        else if( _ds[i] > g._ds[i] ) return 1;
+        if(      Double.isNaN(_ds[i])   || _ds[i] < g._ds[i] ) return -1;
+        else if( Double.isNaN(g._ds[i]) || _ds[i] > g._ds[i] ) return 1;
       return 0;
     }
 

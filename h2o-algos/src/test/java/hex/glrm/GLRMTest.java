@@ -97,7 +97,7 @@ public class GLRMTest extends TestUtil {
       parms._k = 3;
       parms._transform = DataInfo.TransformType.STANDARDIZE;
       parms._init = GLRM.Initialization.User;
-      parms._recover_pca = false;
+      parms._recover_svd = false;
       parms._user_points = yinit._key;
       parms._seed = seed;
 
@@ -137,7 +137,7 @@ public class GLRMTest extends TestUtil {
       parms._transform = DataInfo.TransformType.STANDARDIZE;
       parms._init = GLRM.Initialization.SVD;
       parms._min_step_size = 1e-5;
-      parms._recover_pca = false;
+      parms._recover_svd = false;
       parms._max_iterations = 2000;
 
       try {
@@ -162,13 +162,13 @@ public class GLRMTest extends TestUtil {
     }
   }
 
-  @Test public void testArrestsPCA() throws InterruptedException, ExecutionException {
+  @Test public void testArrestsSVD() throws InterruptedException, ExecutionException {
     // Initialize using first k rows of standardized training frame
     Frame yinit = frame(ard(ard(1.24256408, 0.7828393, -0.5209066, -0.003416473),
             ard(0.50786248, 1.1068225, -1.2117642, 2.484202941),
             ard(0.07163341, 1.4788032, 0.9989801, 1.042878388),
             ard(0.23234938, 0.2308680, -1.0735927, -0.184916602)));
-    double[] stddev = new double[] {1.5748783, 0.9948694, 0.5971291, 0.4164494};
+    double[] sval = new double[] {11.024148, 6.964086, 4.179904, 2.915146};
     double[][] eigvec = ard(ard(-0.5358995, 0.4181809, -0.3412327, 0.64922780),
             ard(-0.5831836, 0.1879856, -0.2681484, -0.74340748),
             ard(-0.2781909, -0.8728062, -0.3780158, 0.13387773),
@@ -188,14 +188,14 @@ public class GLRMTest extends TestUtil {
       parms._user_points = yinit._key;
       parms._max_iterations = 1000;
       parms._min_step_size = 1e-8;
-      parms._recover_pca = true;
+      parms._recover_svd = true;
 
       GLRM job = new GLRM(parms);
       try {
         model = job.trainModel().get();
         Log.info("Iteration " + model._output._iterations + ": Objective value = " + model._output._objective);
-        // checkStddev(stddev, model._output._std_deviation, 1e-4);
-        // checkEigvec(eigvec, model._output._eigenvectors_raw, 1e-4);
+        // checkStddev(sval, model._output._singular_vals, 1e-4);
+        // checkEigvec(eigvec, model._output._eigenvectors, 1e-4);
       } catch (Throwable t) {
         t.printStackTrace();
         throw new RuntimeException(t);
@@ -216,8 +216,8 @@ public class GLRMTest extends TestUtil {
   }
 
   @Test public void testArrestsMissing() throws InterruptedException, ExecutionException {
-    // Expected eigenvectors and their standard deviations with standardized data
-    double[] stddev = new double[] {1.5748783, 0.9948694, 0.5971291, 0.4164494};
+    // Expected eigenvectors and their corresponding singular values with standardized data
+    double[] sval = new double[] {11.024148, 6.964086, 4.179904, 2.915146};
     double[][] eigvec = ard(ard(-0.5358995, 0.4181809, -0.3412327, 0.64922780),
             ard(-0.5831836, 0.1879856, -0.2681484, -0.74340748),
             ard(-0.2781909, -0.8728062, -0.3780158, 0.13387773),
@@ -255,14 +255,14 @@ public class GLRMTest extends TestUtil {
         parms._init = GLRM.Initialization.PlusPlus;
         parms._max_iterations = 1000;
         parms._seed = seed;
-        parms._recover_pca = true;
+        parms._recover_svd = true;
 
         GLRM job = new GLRM(parms);
         try {
           model = job.trainModel().get();
           Log.info(100 * missing_fraction + "% missing values: Objective = " + model._output._objective);
-          double sd_err = errStddev(stddev, model._output._std_deviation)/parms._k;
-          double ev_err = errEigvec(eigvec, model._output._eigenvectors_raw)/parms._k;
+          double sd_err = errStddev(sval, model._output._singular_vals)/parms._k;
+          double ev_err = errEigvec(eigvec, model._output._eigenvectors)/parms._k;
           Log.info("Avg SSE in Std Dev = " + sd_err + "\tAvg SSE in Eigenvectors = " + ev_err);
           sd_map.put(missing_fraction, sd_err);
           ev_map.put(missing_fraction, ev_err);
@@ -292,6 +292,98 @@ public class GLRMTest extends TestUtil {
     Log.info(sb.toString());
   }
 
+  @Test public void testRegularizers() throws InterruptedException, ExecutionException {
+    // Initialize using first 4 rows of USArrests
+    Frame init = frame(ard(ard(13.2, 236, 58, 21.2),
+            ard(10.0, 263, 48, 44.5),
+            ard( 8.1, 294, 80, 31.0),
+            ard( 8.8, 190, 50, 19.5)));
+
+    Frame train = null;
+    GLRM job = null;
+    GLRMModel model = null;
+    long seed = 1234;
+
+    try {
+      train = parse_test_file(Key.make("arrests.hex"), "smalldata/pca_test/USArrests.csv");
+      GLRMParameters parms = new GLRMParameters();
+      parms._train = train._key;
+      parms._k = 4;
+      parms._init = GLRM.Initialization.User;
+      parms._user_points = init._key;
+      parms._transform = DataInfo.TransformType.NONE;
+      parms._recover_svd = false;
+      parms._max_iterations = 1000;
+      parms._seed = seed;
+
+      Log.info("\nNon-negative matrix factorization");
+      parms._gamma_x = parms._gamma_y = 1;
+      parms._regularization_x = GLRMParameters.Regularizer.NonNegative;
+      parms._regularization_y = GLRMParameters.Regularizer.NonNegative;
+      try {
+        job = new GLRM(parms);
+        model = job.trainModel().get();
+        Log.info("Iteration " + model._output._iterations + ": Objective value = " + model._output._objective);
+        Log.info("Archetypes (Y'):\n" + ArrayUtils.pprint(model._output._archetypes));
+      } catch (Throwable t) {
+        t.printStackTrace();
+        throw new RuntimeException(t);
+      } finally {
+        job.remove();
+        if (model != null) {
+          model._parms._loading_key.get().delete();
+          model.delete();
+        }
+      }
+
+      Log.info("\nOrthogonal non-negative matrix factorization");
+      parms._gamma_x = parms._gamma_y = 1;
+      parms._regularization_x = GLRMParameters.Regularizer.OneSparse;
+      parms._regularization_y = GLRMParameters.Regularizer.NonNegative;
+      try {
+        job = new GLRM(parms);
+        model = job.trainModel().get();
+        Log.info("Iteration " + model._output._iterations + ": Objective value = " + model._output._objective);
+        Log.info("Archetypes (Y'):\n" + ArrayUtils.pprint(model._output._archetypes));
+      } catch (Throwable t) {
+        t.printStackTrace();
+        throw new RuntimeException(t);
+      } finally {
+        job.remove();
+        if (model != null) {
+          model._parms._loading_key.get().delete();
+          model.delete();
+        }
+      }
+
+      Log.info("\nQuadratic clustering (k-means)");
+      parms._gamma_x = 1; parms._gamma_y = 0;
+      parms._regularization_x = GLRMParameters.Regularizer.UnitOneSparse;
+      parms._regularization_y = GLRMParameters.Regularizer.L2;
+      try {
+        job = new GLRM(parms);
+        model = job.trainModel().get();
+        Log.info("Iteration " + model._output._iterations + ": Objective value = " + model._output._objective);
+        Log.info("Archetypes (Y'):\n" + ArrayUtils.pprint(model._output._archetypes));
+      } catch (Throwable t) {
+        t.printStackTrace();
+        throw new RuntimeException(t);
+      } finally {
+        job.remove();
+        if (model != null) {
+          model._parms._loading_key.get().delete();
+          model.delete();
+        }
+      }
+    } catch (Throwable t) {
+      t.printStackTrace();
+      throw new RuntimeException(t);
+    } finally {
+      init.delete();
+      if (train != null) train.delete();
+    }
+  }
+
   @Test public void testCategoricalIris() throws InterruptedException, ExecutionException {
     GLRM job = null;
     GLRMModel model = null;
@@ -305,7 +397,7 @@ public class GLRMTest extends TestUtil {
       parms._k = 4;
       parms._init = GLRM.Initialization.SVD;
       parms._transform = DataInfo.TransformType.NONE;
-      parms._recover_pca = true;
+      parms._recover_svd = true;
       parms._max_iterations = 1000;
 
       try {
@@ -350,7 +442,7 @@ public class GLRMTest extends TestUtil {
       parms._k = 8;
       parms._init = GLRM.Initialization.PlusPlus;
       parms._transform = DataInfo.TransformType.STANDARDIZE;
-      parms._recover_pca = false;
+      parms._recover_svd = false;
       parms._max_iterations = 200;
 
       try {
@@ -393,7 +485,7 @@ public class GLRMTest extends TestUtil {
     Frame fr = null;
     try {
       fr = parse_test_file(Key.make("iris.hex"), "smalldata/iris/iris_wheader.csv");
-      DataInfo dinfo = new DataInfo(Key.make(), fr, null, 0, true, DataInfo.TransformType.NONE, DataInfo.TransformType.NONE, false, false, /* weights */ false, /* offset */ false);
+      DataInfo dinfo = new DataInfo(Key.make(), fr, null, 0, true, DataInfo.TransformType.NONE, DataInfo.TransformType.NONE, false, false, /* weights */ false, /* offset */ false, /* fold */ false);
 
       Log.info("Original matrix:\n" + colFormat(iris_cols, "%8.7s") + ArrayUtils.pprint(iris));
       double[][] iris_perm = ArrayUtils.permuteCols(iris, dinfo._permutation);
@@ -432,7 +524,7 @@ public class GLRMTest extends TestUtil {
         Scope.track(fr.replace(cats[i], fr.vec(cats[i]).toEnum())._key);
       fr.remove("ID").remove();
       DKV.put(fr._key, fr);
-      DataInfo dinfo = new DataInfo(Key.make(), fr, null, 0, true, DataInfo.TransformType.NONE, DataInfo.TransformType.NONE, false, false, /* weights */ false, /* offset */ false);
+      DataInfo dinfo = new DataInfo(Key.make(), fr, null, 0, true, DataInfo.TransformType.NONE, DataInfo.TransformType.NONE, false, false, /* weights */ false, /* offset */ false, /* fold */ false);
 
       Log.info("Original matrix:\n" + colFormat(pros_cols, "%8.7s") + ArrayUtils.pprint(prostate));
       double[][] pros_perm = ArrayUtils.permuteCols(prostate, dinfo._permutation);

@@ -1,22 +1,23 @@
 package hex;
 
 import hex.schemas.ModelBuilderSchema;
+import jsr166y.CountedCompleter;
 import water.*;
 import water.exceptions.H2OIllegalArgumentException;
 import water.exceptions.H2OKeyNotFoundArgumentException;
-import water.fvec.C0DChunk;
-import water.fvec.Frame;
-import water.fvec.Vec;
-import water.util.Log;
-import water.util.MRUtils;
-import water.util.ReflectionUtils;
+import water.exceptions.H2OModelBuilderIllegalArgumentException;
+import water.fvec.*;
+import water.util.*;
+import static water.util.RandomUtils.getRNG;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
 /**
  *  Model builder parent class.  Contains the common interfaces and fields across all model builders.
@@ -24,7 +25,8 @@ import java.util.Map;
 abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Parameters, O extends Model.Output> extends Job<M> {
 
   /** All the parameters required to build the model. */
-  public final P _parms;
+  public P _parms;
+  private P parms;
 
   /** Training frame: derived from the parameter's training frame, excluding
    *  all ignored columns, all constant and bad columns, perhaps flipping the
@@ -55,6 +57,21 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
   public Vec response(){return _response;}
   /** Validation response vector. */
   public Vec vresponse(){return _vresponse;}
+
+  /**
+   * Compute the (weighted) mean of the response (subtracting possible offset terms)
+   * @return mean
+   */
+  protected double responseMean() {
+    if (hasWeightCol() || hasOffsetCol()) {
+      return new FrameUtils.WeightedMean().doAll(
+              _response,
+              hasWeightCol() ? _weights : _response.makeCon(1),
+              hasOffsetCol() ? _offset : _response.makeCon(0)
+      ).weightedMean();
+    }
+    return _response.mean();
+  }
 
 
 
@@ -127,7 +144,7 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
 
   /** Constructor making a default destination key */
   public ModelBuilder(String desc, P parms) {
-    this((parms == null || parms._model_id == null) ? Key.make(desc + "Model_" + Key.rand()) : parms._model_id, desc, parms);
+    this((parms == null || parms._model_id == null) ? Key.make(H2O.calcNextUniqueModelId(desc)) : parms._model_id, desc, parms);
   }
 
   /** Default constructor, given all arguments */
@@ -171,7 +188,242 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
   }
 
   /** Method to launch training of a Model, based on its parameters. */
-  abstract public Job<M> trainModel();
+  final public Job<M> trainModel() {
+//    init(false); //parameter sanity check (such as _fold_column, etc.)
+    if (error_count() > 0) {
+      throw H2OModelBuilderIllegalArgumentException.makeFromBuilder(this);
+    }
+    return _parms._nfolds == 0 && _parms._fold_column == null ? trainModelImpl(progressUnits()) :
+            // cross-validation needs to be forked off to allow continuous (non-blocking) progress bar
+            start(new H2O.H2OCountedCompleter(){
+              @Override protected void compute2() {
+                computeCrossValidation();
+                tryComplete();
+              }
+              @Override public boolean onExceptionalCompletion(Throwable ex, CountedCompleter caller) {
+                failed(ex);
+                return true;
+              }
+            }, (_parms._nfolds+1)*progressUnits());
+  }
+
+  /**
+   * Model-specific implementation of model training
+   * @param progressUnits Number of progress units (each advances the Job's progress bar by a bit)
+   * @return ModelBuilder job
+   */
+  abstract public Job<M> trainModelImpl(long progressUnits);
+  abstract public long progressUnits();
+
+  /**
+   * Default naive (serial) implementation of N-fold cross-validation
+   * @return Cross-validation Job
+   * (builds N+1 models, all have train+validation metrics, the main model has N-fold cross-validated validation metrics)
+   */
+  public Job<M> computeCrossValidation() {
+    assert _valid == null;
+    final Key<Frame> origTrainFrameKey = _parms._train;
+    final Frame origTrainFrame = train();
+    final Model.Parameters.FoldAssignmentScheme foldAssignmentScheme = _parms._fold_assignment;
+
+    // Step 1: Assign each row to a fold
+    // TODO: Implement better splitting algo (with Strata if response is categorical), e.g. http://www.lexjansen.com/scsug/2009/Liang_Xie2.pdf
+    final Vec foldAssignment;
+
+    final Integer N;
+    if (_parms._fold_column != null) {
+      foldAssignment = origTrainFrame.vec(_parms._fold_column);
+      N = (int)foldAssignment.max() - (int)foldAssignment.min() + 1;
+      assert(N>1); //should have been already checked in init();
+    } else {
+      N = _parms._nfolds;
+      long seed = new Random().nextLong();
+      for (Field f : _parms.getClass().getFields()) {
+        if (f.getName().equals("_seed")) {
+          try {
+            seed = (long)(f.get(_parms));
+          } catch (IllegalAccessException e) {
+            e.printStackTrace();
+          }
+        }
+      }
+      final long actualSeed = seed;
+      Log.info("Creating " + N + " cross-validation splits with random number seed: " + actualSeed);
+      foldAssignment = origTrainFrame.anyVec().makeZero();
+      new MRTask() {
+        @Override
+        public void map(Chunk foldAssignment) {
+          for (int i = 0; i < foldAssignment._len; ++i) {
+            int fold;
+            switch (foldAssignmentScheme) {
+              case Random:
+                fold = Math.abs(getRNG(foldAssignment.start() + actualSeed + i).nextInt()) % N;
+                break;
+              case Modulo:
+                fold = ((int) (foldAssignment.start() + i)) % N;
+                break;
+              default:
+                throw H2O.unimpl();
+            }
+            foldAssignment.set(i, fold);
+          }
+        }
+      }.doAll(foldAssignment);
+    }
+
+    final Key[] modelKeys = new Key[N];
+
+    // Step 2: Make 2*N binary weight vectors
+    final String origWeightsName = _parms._weights_column;
+    final Vec[] weights = new Vec[2*N];
+    final Vec origWeight  = origWeightsName != null ? origTrainFrame.vec(origWeightsName) : origTrainFrame.anyVec().makeCon(1.0);
+    for (int i=0; i<N; ++i) {
+      // Make weights
+      weights[2*i]   = origTrainFrame.anyVec().makeZero();
+      weights[2*i+1] = origTrainFrame.anyVec().makeZero();
+
+      // Now update the weights in place
+      final int whichFold = i;
+      new MRTask() {
+        @Override
+        public void map(Chunk chks[]) {
+          Chunk fold = chks[0];
+          Chunk orig = chks[1];
+          Chunk train = chks[2];
+          Chunk valid = chks[3];
+          for (int i=0; i< orig._len; ++i) {
+            int foldAssignment = (int)fold.at8(i) % N;
+            assert(foldAssignment >= 0 && foldAssignment <N);
+            boolean holdout = foldAssignment == whichFold;
+            double w = orig.atd(i);
+            train.set(i, holdout ? 0 : w);
+            valid.set(i, holdout ? w : 0);
+          }
+        }
+      }.doAll(new Vec[]{foldAssignment, origWeight, weights[2*i], weights[2*i+1]});
+      if (weights[2*i].isConst() || weights[2*i+1].isConst()) {
+        String msg = "Not enough data to create " + N + " random cross-validation splits. Either reduce nfolds, specify a larger dataset (or specify another random number seed, if applicable).";
+        throw new H2OIllegalArgumentException(msg);
+      }
+    }
+    if (_parms._fold_column == null) {
+      foldAssignment.remove();
+    }
+
+    // Build N cross-validation models
+    final Key<M> origDest = dest();
+    // adapt main Job's progress bar to build N+1 models
+    ModelMetrics.MetricBuilder[] mb = new ModelMetrics.MetricBuilder[N];
+    _deleteProgressKey = false; // keep the same progress bar for all N+1 jobs
+
+    for (int i=0; i<N; ++i) {
+      Log.info("Building cross-validation model " + (i+1) + " / " + N + ".");
+      final String identifier = origDest.toString() + "_cv_" + (i+1);
+      final String weightName = "weights";
+
+      // Training/Validation share the same data, but will have exclusive weights
+      final Frame cvTrain = new Frame(Key.make(identifier+"_"+origTrainFrameKey.toString()+"_train"), origTrainFrame.names(), origTrainFrame.vecs());
+      cvTrain.add(weightName, weights[2*i]);
+      DKV.put(cvTrain);
+      final Frame cvVal = new Frame(Key.make(identifier+"_"+origTrainFrameKey.toString()+"_valid"), origTrainFrame.names(), origTrainFrame.vecs());
+      cvVal.add(weightName, weights[2*i+1]);
+      DKV.put(cvVal);
+
+      modelKeys[i] = Key.make(identifier);
+
+      // Build CV model - launch a separate Job
+      Model m;
+      {
+        ModelBuilder<M, P, O> cvModel = (ModelBuilder<M, P, O>) this.clone();
+        cvModel._dest = modelKeys[i];
+        cvModel._key = Key.make(_key.toString() + "_cv" + i);
+        cvModel._state = JobState.CREATED;
+        cvModel._description = identifier;
+        cvModel._parms._weights_column = weightName;
+        cvModel._parms._train = cvTrain._key;
+        cvModel._parms._valid = cvVal._key;
+        cvModel.modifyParmsForCrossValidationSplits(i, N);
+
+        cvModel.trainModelImpl(-1);
+        m = cvModel.get();
+        cvModel.remove(); //keep the cv jobs around
+      }
+
+      // holdout scoring
+      {
+        Frame adaptFr = new Frame(cvVal);
+        m.adaptTestForTrain(adaptFr, true, !isSupervised());
+        mb[i] = m.scoreMetrics(adaptFr);
+
+        if (!_parms._keep_cross_validation_splits) {
+          weights[2 * i].remove();
+          weights[2 * i + 1].remove();
+          DKV.remove(cvTrain._key);
+          DKV.remove(cvVal._key);
+          if (origWeightsName == null) origWeight.remove();
+        }
+        Model.cleanup_adapt(adaptFr, cvVal);
+        DKV.remove(adaptFr._key);
+      }
+    }
+
+    Log.info("Building main model.");
+    _dest = origDest;
+    _parms._weights_column = origWeightsName;
+    _parms._train = origTrainFrameKey;
+    _state = JobState.CREATED;
+    _deleteProgressKey = true; //delete progress after the main model is done
+    _parms._valid = null; //(cross-)validation metrics get stitched together below
+    if (_parms._fold_column == null) {
+      _parms._nfolds = N; //let the main model know that it is built with cross-validation (no early stopping, etc.)
+    }
+    modifyParmsForCrossValidationMainModel(N);
+
+    Job<M> main = trainModelImpl(-1);
+    Model mainModel = main.get();
+
+//    new TAtomic<JobList>() {
+//      @Override public JobList atomic(JobList old) {
+//        if( old == null ) old = new JobList();
+//        Key[] jobs = old._jobs;
+//        old._jobs = Arrays.copyOf(jobs, jobs.length - 1);
+//        return old;
+//      }
+//    }.invoke(LIST);
+
+    Log.info("Computing " + N + "-fold cross-validation metrics.");
+    mainModel._output._cross_validation_models = new Key[N];
+    for (int i=0; i<N; ++i) {
+      if (i>0) mb[0].reduce(mb[i]);
+      mainModel._output._cross_validation_models[i] = modelKeys[i];
+    }
+    mainModel._output._validation_metrics = mb[0].makeModelMetrics(mainModel, _parms.train());
+    mainModel._output._validation_metrics._description = N + "-fold cross-validation on training data";
+    DKV.put(mainModel);
+    return main;
+  }
+  /**
+   * Override with model-specific checks / modifications to _parms for N-fold cross-validation splits.
+   * For example, the models might need to be told to not do early stopping.
+   * @param i which model index [0...N-1]
+   * @param N Total number of cross-validation folds
+   */
+  public void modifyParmsForCrossValidationSplits(int i, int N) {
+    _parms._nfolds = 0;
+  }
+
+  /**
+   * Override for model-specific checks / modifications to _parms for the main model during N-fold cross-validation.
+   * For example, the model might need to be told to not do early stopping.
+   */
+  public void modifyParmsForCrossValidationMainModel(int N) {
+  }
+
+  boolean _deleteProgressKey = true;
+  @Override
+  protected boolean deleteProgressKey() {
+    return _deleteProgressKey;
+  }
 
   /** List containing the categories of models that this builder can
    *  build.  Each ModelBuilder must have one of these. */
@@ -198,7 +450,6 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
   /** Clear whatever was done by init() so it can be run again. */
   public void clearInitState() {
     clearValidationErrors();
-
   }
 
   public boolean isSupervised(){return false;}
@@ -207,9 +458,12 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
   protected transient Vec _vresponse; // Handy response column
   protected transient Vec _offset; // Handy offset column
   protected transient Vec _weights;
+  protected transient Vec _fold;
 
-  public boolean hasOffset(){ return _offset != null;}
-  public boolean hasWeights(){return _weights != null;}
+  public boolean hasOffsetCol(){ return _parms._offset_column != null;} // don't look at transient Vec
+  public boolean hasWeightCol(){return _parms._weights_column != null;} // don't look at transient Vec
+  public boolean hasFoldCol(){return _parms._fold_column != null;} // don't look at transient Vec
+  public int numSpecialCols() { return (hasOffsetCol() ? 1 : 0) + (hasWeightCol() ? 1 : 0) + (hasFoldCol() ? 1 : 0); }
   // no hasResponse, call isSupervised instead (response is mandatory if isSupervised is true)
 
   protected int _nclass; // Number of classes; 1 for regression; 2+ for classification
@@ -219,7 +473,7 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
   public final boolean isClassifier() { return _nclass > 1; }
 
   /**
-   * Find and set response/weights/offset and put them all in the end,
+   * Find and set response/weights/offset/fold and put them all in the end,
    * @return number of non-feature vecs
    */
   protected int separateFeatureVecs() {
@@ -227,7 +481,7 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
     if(_parms._weights_column != null) {
       Vec w = _train.remove(_parms._weights_column);
       if(w == null)
-        error("_weights_column","Offset column '" + _parms._weights_column  + "' not found in the training frame");
+        error("_weights_column","Weights column '" + _parms._weights_column  + "' not found in the training frame");
       else {
         if(!w.isNumeric())
           error("_weights_column","Invalid weights column '" + _parms._weights_column  + "', weights must be numeric");
@@ -241,6 +495,9 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
         _train.add(_parms._weights_column, w);
         ++res;
       }
+    } else {
+      _weights = null;
+      assert(!hasWeightCol());
     }
     if(_parms._offset_column != null) {
       Vec o = _train.remove(_parms._offset_column);
@@ -257,6 +514,34 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
         _train.add(_parms._offset_column, o);
         ++res;
       }
+    } else {
+      _offset = null;
+      assert(!hasOffsetCol());
+    }
+    if(_parms._fold_column != null) {
+      Vec f = _train.remove(_parms._fold_column);
+      if(f == null)
+        error("_fold_column","Fold column '" + _parms._fold_column  + "' not found in the training frame");
+      else {
+        if(!f.isInt())
+          error("_fold_column","Invalid fold column '" + _parms._fold_column  + "', fold must be integer");
+        if(f.min() < 0)
+          error("_fold_column","Invalid fold column '" + _parms._fold_column  + "', fold must be non-negative");
+        if(f.isConst())
+          error("_fold_column","Invalid fold column '" + _parms._fold_column  + "', fold cannot be constant");
+        _fold = f;
+        if(f.naCnt() > 0)
+          error("_fold_column","Fold cannot have missing values.");
+        if(_fold == _weights)
+          error("_fold_column", "Fold must be different from weights");
+        if(_fold == _offset)
+          error("_fold_column", "Fold must be different from offset");
+        _train.add(_parms._fold_column, f);
+        ++res;
+      }
+    } else {
+      _fold = null;
+      assert(!hasFoldCol());
     }
     if(isSupervised() && _parms._response_column != null) {
       _response = _train.remove(_parms._response_column);
@@ -267,10 +552,11 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
         _train.add(_parms._response_column, _response);
         ++res;
       }
+    } else {
+      _response = null;
     }
     return res;
   }
-
 
   protected  boolean ignoreStringColumns(){return true;}
 
@@ -321,8 +607,6 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
       Log.info("Building H2O " + this.getClass().getSimpleName().toString() + " model with these parameters:");
       Log.info(new String(_parms.writeJSON(new AutoBuffer()).buf()));
     }
-
-
     // NOTE: allow re-init:
     clearInitState();
     assert _parms != null;      // Parms must already be set in
@@ -334,7 +618,23 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
     Frame tr = _parms.train();
     if( tr == null ) { error("_train","Missing training frame: "+_parms._train); return; }
     _train = new Frame(null /* not putting this into KV */, tr._names.clone(), tr.vecs().clone());
-
+    if (_parms._nfolds < 0 || _parms._nfolds == 1) {
+      error("_nfolds", "nfolds must be either 0 or >1.");
+    }
+    if (_parms._nfolds > 1 && _parms._nfolds > train().numRows()) {
+      error("_nfolds", "nfolds cannot be larger than the number of rows (" + train().numRows() + ").");
+    }
+    if (_parms._fold_column != null) {
+      hide("_fold_assignment", "Fold assignment is ignored when a fold column is specified.");
+      if (_parms._nfolds > 1) {
+        error("_nfolds", "nfolds cannot be specified at the same time as a fold column.");
+      } else {
+        hide("_nfolds", "nfolds is ignored when a fold column is specified.");
+      }
+    }
+    if (_parms._nfolds > 1) {
+      hide("_fold_column", "Fold column is ignored when nfolds > 1.");
+    }
     // Drop explicitly dropped columns
     if( _parms._ignored_columns != null ) {
       _train.remove(_parms._ignored_columns);
@@ -359,7 +659,7 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
       }
       if (! _parms._balance_classes)
         hide("_max_after_balance_size", "Balance classes is false, hide max_after_balance_size");
-      else if (_parms._weights_column != null)
+      else if (_parms._weights_column != null && _weights != null && !_weights.isBinary())
         error("_balance_classes", "Balance classes and observation weights are not currently supported together.");
       if( _parms._max_after_balance_size <= 0.0 )
         error("_max_after_balance_size","Max size after balancing needs to be positive, suggest 1.0f");
@@ -391,10 +691,6 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
         hide("_max_after_balance_size", "Max after balance size is only applicable to classification problems.");
         hide("_max_confusion_matrix_size", "Max confusion matrix size is only applicable to classification problems.");
       }
-      else {
-        if (_offset != null && !this.getAlgo().equals("glm"))
-          error("_offset", "Offset only applies to regression and logistic regression.");
-      }
       if (_nclass <= 2) {
         hide("_max_hit_ratio_k", "Max K-value for hit ratio is only applicable to multi-class classification problems.");
         hide("_max_confusion_matrix_size", "Only for multi-class classification problems.");
@@ -421,7 +717,7 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
     if (va != null) {
       _valid = new Frame(null /* not putting this into KV */, va._names.clone(), va.vecs().clone());
       try {
-        String[] msgs = Model.adaptTestForTrain(_train._names, _parms._weights_column, _parms._offset_column, null, _train.domains(), _valid, _parms.missingColumnsType(), expensive, true);
+        String[] msgs = Model.adaptTestForTrain(_train._names, _parms._weights_column, _parms._offset_column, _parms._fold_column, null, _train.domains(), _valid, _parms.missingColumnsType(), expensive, true);
         _vresponse = _valid.vec(_parms._response_column);
         if (_vresponse == null && _parms._response_column != null)
           error("_validation_frame", "Validation frame must have a response column '" + _parms._response_column + "'.");
@@ -435,7 +731,19 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
       } catch (IllegalArgumentException iae) {
         error("_valid", iae.getMessage());
       }
+      if (_parms._nfolds > 1) {
+        error("_nfolds", "nfolds > 1 is not supported if a validation dataset is provided.");
+      }
+    } else {
+      _valid = null;
+      _vresponse = null;
     }
+    assert(_weights != null == hasWeightCol());
+    assert(_parms._weights_column != null == hasWeightCol());
+    assert(_offset != null == hasOffsetCol());
+    assert(_parms._offset_column != null == hasOffsetCol());
+    assert(_fold != null == hasFoldCol());
+    assert(_parms._fold_column != null == hasFoldCol());
   }
 
   /**
@@ -459,8 +767,6 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
         builder._messages = ModelBuilder.this._messages;
         return builder;
       }
-      // Run the onCancelled code synchronously, right now
-      @Override public void onSuccess( Job old ) { if( isCancelledOrCrashed() ) onCancelled(); }
     }.invoke(_key);
     }
 
@@ -540,4 +846,5 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
 
     @Override public String toString() { return message_type + " on field: " + field_name + ": " + message; }
   }
+
 }

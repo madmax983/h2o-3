@@ -29,10 +29,16 @@
   stopifnot(is(conn, "H2OConnection"))
   stopifnot(is.character(urlSuffix))
 
+  if (conn@https) {
+    scheme = "https"
+  } else {
+    scheme = "http"
+  }
+
   if (missing(h2oRestApiVersion))
-    sprintf("http://%s:%s/%s", conn@ip, as.character(conn@port), urlSuffix)
+    sprintf("%s://%s:%s/%s", scheme, conn@ip, as.character(conn@port), urlSuffix)
   else
-    sprintf("http://%s:%s/%s/%s", conn@ip, as.character(conn@port), h2oRestApiVersion, urlSuffix)
+    sprintf("%s://%s:%s/%s/%s", scheme, conn@ip, as.character(conn@port), h2oRestApiVersion, urlSuffix)
 }
 
 .h2o.doRawREST <- function(conn = h2o.getConnection(), h2oRestApiVersion, urlSuffix, parms, method, fileUploadInfo, ...) {
@@ -58,6 +64,22 @@
   }
 
   url = .h2o.calcBaseURL(conn = conn, h2oRestApiVersion = h2oRestApiVersion, urlSuffix = urlSuffix)
+
+  opts = curlOptions()
+  if (!is.na(conn@username)) {
+    if (is.na(conn@password)) {
+      stop("Password not specified")
+    }
+
+    userpwd = sprintf("%s:%s", conn@username, conn@password)
+    basicAuth = 1L
+    opts = curlOptions(userpwd = userpwd, httpauth = basicAuth, .opts = opts)
+  }
+  if (conn@https) {
+    if (conn@insecure) {
+      opts = curlOptions(ssl.verifypeer = 0L, .opts = opts)
+    }
+  }
 
   queryString = ""
   i = 1L
@@ -110,7 +132,8 @@
     tmp = tryCatch(getURL(url = url,
                           headerfunction = h$update,
                           useragent = R.version.string,
-                          timeout = timeout_secs),
+                          timeout = timeout_secs,
+                          .opts = opts),
                    error = function(x) { .__curlError <<- TRUE; .__curlErrorMessage <<- x$message })
     if (! .__curlError) {
       httpStatusCode = as.numeric(h$value()["status"])
@@ -128,7 +151,8 @@
                                               useragent = R.version.string,
                                               httpheader = c('Expect' = ''),
                                               verbose = FALSE,
-                                              timeout = timeout_secs)),
+                                              timeout = timeout_secs,
+                                              .opts = opts)),
                    error = function(x) { .__curlError <<- TRUE; .__curlErrorMessage <<- x$message })
     if (! .__curlError) {
       httpStatusCode = as.numeric(h$value()["status"])
@@ -145,7 +169,8 @@
                                useragent = R.version.string,
                                httpheader = c('Expect' = ''),
                                verbose = FALSE,
-                               timeout = timeout_secs),
+                               timeout = timeout_secs,
+                               .opts = opts),
                    error = function(x) { .__curlError <<- TRUE; .__curlErrorMessage <<- x$message })
     if (! .__curlError) {
       httpStatusCode = as.numeric(h$value()["status"])
@@ -161,7 +186,8 @@
                                 headerfunction = h$update,
                                 useragent=R.version.string,
                                 verbose = FALSE,
-                                timeout = timeout_secs),
+                                timeout = timeout_secs,
+                                .opts = opts),
                     error = function(x) { .__curlError <<- TRUE; .__curlErrorMessage <<- x$message })
     if (! .__curlError) {
       httpStatusCode = as.numeric(h$value()["status"])
@@ -442,6 +468,12 @@
   processTables(res)
 }
 
+
+.format.helper <- function(x, format) {
+    if( is.list(x) ) lapply(x, .format.helper, format)
+    else             sapply(x, function(i) if( is.na(i) ) "" else sprintf(format, i))
+}
+
 #' Print method for H2OTable objects
 #'
 #' This will print a truncated view of the table if there are more than 20 rows.
@@ -455,11 +487,11 @@ print.H2OTable <- function(x, header=TRUE, ...) {
   # format columns
   formats <- attr(x, "formats")
   xx <- x
+
   for (j in seq_along(x)) {
     if( formats[j] == "%d" ) formats[j] <- "%f"
-    xx[[j]] <- ifelse(is.na(x[[j]]), "", sprintf(formats[j], x[[j]]))
+    xx[[j]] <- .format.helper(x[[j]], formats[j])
   }
-
   # drop empty columns
   nz <- unlist(lapply(xx, function(y) any(nzchar(y))), use.names = FALSE)
   xx <- xx[nz]
@@ -532,7 +564,23 @@ h2o.clusterIsUp <- function(conn = h2o.getConnection()) {
 
   rv <- .h2o.doRawGET(conn = conn, urlSuffix = "")
 
-  !rv$curlError && ((rv$httpStatusCode == 200) || (rv$httpStatusCode == 301))
+  if (rv$curlError) {
+    return(FALSE)
+  }
+
+  if (rv$httpStatusCode == 401) {
+    warning("401 Unauthorized Access.  Did you forget to provide a username and password?")
+  }
+
+  if (rv$httpStatusCode == 200) {
+    return(TRUE)
+  }
+
+  if (rv$httpStatusCode == 301) {
+    return(TRUE)
+  }
+
+  return(FALSE)
 }
 
 #'
