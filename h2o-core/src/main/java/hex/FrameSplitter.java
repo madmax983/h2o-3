@@ -35,19 +35,19 @@ public class FrameSplitter extends H2OCountedCompleter<FrameSplitter> {
   /** Split ratios - resulting number of split is ratios.length+1 */
   final double[] ratios;
   /** Destination keys for each output frame split. */
-  final Key[]   destKeys;
+  final Key<Frame>[]   destKeys;
   /** Optional job key */
-  final Key     jobKey;
+  final Key<Job>     jobKey;
 
   /** Output frames for each output split part */
   private Frame[] splits;
   /** Temporary variable holding exceptions of workers */
   private Throwable[] workersExceptions;
 
-  public FrameSplitter(Frame dataset, double[] ratios, Key[] destKeys, Key jobKey) {
+  public FrameSplitter(Frame dataset, double[] ratios, Key<Frame>[] destKeys, Key<Job> jobKey) {
     this(null, dataset, ratios,destKeys,jobKey);
   }
-  public FrameSplitter(H2OCountedCompleter cc, Frame dataset, double[] ratios, Key[] destKeys, Key jobKey) {
+  public FrameSplitter(H2OCountedCompleter cc, Frame dataset, double[] ratios, Key<Frame>[] destKeys, Key<Job> jobKey) {
     super(cc);
     assert ratios.length > 0 : "No ratio specified!";
     assert ratios.length < 100 : "Too many frame splits demanded!";
@@ -131,7 +131,7 @@ public class FrameSplitter extends H2OCountedCompleter<FrameSplitter> {
   // Make vector templates for all output frame vectors
   private Vec[][] makeTemplates(Frame dataset, double[] ratios) {
     Vec anyVec = dataset.anyVec();
-    final long[][] espcPerSplit = computeEspcPerSplit(anyVec._espc, anyVec.length(), ratios);
+    final long[][] espcPerSplit = computeEspcPerSplit(anyVec.espc(), anyVec.length(), ratios);
     final int num = dataset.numCols(); // number of columns in input frame
     final int nsplits = espcPerSplit.length; // number of splits
     final String[][] domains = dataset.domains(); // domains
@@ -142,7 +142,9 @@ public class FrameSplitter extends H2OCountedCompleter<FrameSplitter> {
     Vec[][] t = new Vec[nsplits][/*num*/]; // resulting vectors for all
     for (int i=0; i<nsplits; i++) {
       // vectors for j-th split
-      t[i] = new Vec(Vec.newKey(),espcPerSplit[i/*-th split*/]).makeCons(num, 0, domains, types);
+      Key vkey = Vec.newKey();
+      int rowLayout = Vec.ESPC.rowLayout(vkey,espcPerSplit[i]);
+      t[i] = new Vec(vkey,rowLayout).makeCons(num, 0, domains, types);
     }
     return t;
   }
@@ -191,7 +193,7 @@ public class FrameSplitter extends H2OCountedCompleter<FrameSplitter> {
       long[] partSizes = partitione(anyInVec.length(), _ratios);
       long pnrows = 0;
       for (int p=0; p<_partIdx; p++) pnrows += partSizes[p];
-      long[] espc = anyInVec._espc;
+      long[] espc = anyInVec.espc();
       while (_pcidx < espc.length-1 && (pnrows -= (espc[_pcidx+1]-espc[_pcidx])) >= 0 ) _pcidx++;
       assert pnrows <= 0;
       _psrow = (int) (pnrows + espc[_pcidx+1]-espc[_pcidx]);

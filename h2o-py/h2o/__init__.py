@@ -5,8 +5,8 @@
 The H2O Python Module
 =====================
 
-This module provides access to the H2O JVM, as well as its extensions, objects, 
-machine-learning algorithms, and modeling support capabilities, such as basic 
+This module provides access to the H2O JVM, as well as its extensions, objects,
+machine-learning algorithms, and modeling support capabilities, such as basic
 munging and feature generation.
 
 The H2O JVM uses a web server so that all communication occurs on a socket (specified
@@ -28,8 +28,8 @@ What is H2O?
 ------------
 
 H2O is a Java-based software for data modeling and general computing. There are many
-different perceptions of the H2O software, but the primary purpose of H2O is as a 
-distributed (many machines), parallel (many CPUs), in memory (several hundred GBs Xmx) 
+different perceptions of the H2O software, but the primary purpose of H2O is as a
+distributed (many machines), parallel (many CPUs), in memory (several hundred GBs Xmx)
 processing engine.
 
 There are two levels of parallelism:
@@ -55,7 +55,7 @@ regularly engage the machine learning community all over the nation with a very 
 `meetup schedule <http://h2o.ai/events/>`_ (so if you're not in The Valley, no sweat,
 we're probably coming to your area soon!), and finally, we host our very own `H2O World
 conference <http://h2o.ai/h2o-world/>`_. We also sometimes host hack-a-thons at our
-campus in Mountain View, CA. Needless to say, H2O provides a lot of support for 
+campus in Mountain View, CA. Needless to say, H2O provides a lot of support for
 application developers.
 
 In order to make the most out of H2O, there are some key conceptual pieces that are important
@@ -102,13 +102,12 @@ Objects In This Module
 ----------------------
 
 The objects that are of primary concern to the python user are (in order of importance)
-- Keys
+- IDs/Keys
 - Frames
-- Vecs
 - Models
 - ModelMetrics
 - Jobs (to a lesser extent)
-Each of these objects are described in greater detail in this documentation, 
+Each of these objects are described in greater detail in this documentation,
 but a few brief notes are provided here.
 
 
@@ -118,36 +117,36 @@ H2OFrame
 An H2OFrame is a 2D array of uniformly-typed columns. Data in H2O is compressed (often
 achieving 2-4x better compression than gzip on disk) and is held in the JVM heap (i.e.
 data is "in memory"), and *not* in the python process local memory. The H2OFrame is an
-iterable (supporting list comprehensions) wrapper around a list of H2OVec objects. All an
-H2OFrame object is, therefore, is a wrapper on a list that supports various types of operations
-that may or may not be lazy. Here's an example showing how a list comprehension is combined
-with lazy expressions to compute the column means for all columns in the H2OFrame::
+iterable (supporting list comprehensions). All an H2OFrame object is, therefore, is a
+wrapper on a list that supports various types of operations that may or may not be lazy.
+Here's an example showing how a list comprehension is combined with lazy expressions to
+compute the column means for all columns in the H2OFrame::
 
-  >>> df = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate data
+  >>> df = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate data
   >>>
-  >>> colmeans = [v.mean() for v in df]                            # compute column means
+  >>> colmeans = df.mean()                                        # compute column means
   >>>
-  >>> colmeans                                                     # print the results
+  >>> colmeans                                                    # print the results
   [5.843333333333335, 3.0540000000000007, 3.7586666666666693, 1.1986666666666672]
 
 Lazy expressions will be discussed briefly in the coming sections, as they are not
 necessarily going to be integral to the practicing data scientist. However, their primary
 purpose is to cut down on the chatter between the client (a.k.a the python interface) and
-H2O. Lazy expressions are `Katamari'd <http://www.urbandictionary.com/define.php?term=Katamari>`_ 
+H2O. Lazy expressions are `Katamari'd <http://www.urbandictionary.com/define.php?term=Katamari>`_
 together and only ever evaluated when some piece of output is requested (e.g. print-to-screen).
 
 The set of operations on an H2OFrame is described in a dedicated chapter, but
 in general, this set of operations closely resembles those that may be
 performed on an R data.frame. This includes all types of slicing (with complex
 conditionals), broadcasting operations, and a slew of math operations for transforming and
-mutating a Frame -- all the while the actual Big Data is sitting in the H2O cloud. The semantics 
+mutating a Frame -- all the while the actual Big Data is sitting in the H2O cloud. The semantics
 for modifying a Frame closely resemble R's copy-on-modify semantics, except when it comes
 to mutating a Frame in place. For example, it's possible to assign all occurrences of the
 number `0` in a column to missing (or `NA` in R parlance) as demonstrated in the following
 snippet::
 
 
-  >>> df = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate data
+  >>> df = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate data
   >>>
   >>> vol = df['VOL']                                              # select the VOL column
   >>>
@@ -155,20 +154,13 @@ snippet::
 
 After this operation, `vol` has been permanently mutated in place (it is not a copy!).
 
-H2OVec
-++++++
-An H2OVec is a single column of data that is uniformly typed and possibly lazily computed.
-As with H2OFrame, an H2OVec is a pointer to a distributed Java object residing in the H2O
-cloud. In reality, an H2OFrame is simply a collection of H2OVec pointers along with
-some metadata and various member methods.
-
-Expr
-++++
+ExprNode
+++++++++
 In the guts of this module is the Expr class, which defines objects holding
-the cumulative, unevaluated expressions that may become H2OFrame/H2OVec objects.
+the cumulative, unevaluated expressions that may become H2OFrame objects.
 For example:
 
-  >>> fr = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate data
+  >>> fr = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate data
   >>>
   >>> a = fr + 3.14159                                             # "a" is now an Expr
   >>>
@@ -176,17 +168,17 @@ For example:
 
 These objects are not as important to distinguish at the user level, and all operations
 can be performed with the mental model of operating on 2D frames (i.e. everything is an
-H2OFrame). 
+H2OFrame).
 
 In the previous snippet, `a` has not yet triggered any big data evaluation and is, in
 fact, a pending computation. Once `a` is evaluated, it stays evaluated. Additionally,
 all dependent subparts composing `a` are also evaluated.
 
-This module relies on reference counting of python objects to dispose of 
-out-of-scope objects. The Expr class destroys objects and their big data 
+This module relies on reference counting of python objects to dispose of
+out-of-scope objects. The Expr class destroys objects and their big data
 counterparts in the H2O cloud using a remove call:
 
-  >>> fr = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate data
+  >>> fr = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate data
   >>>
   >>> h2o.remove(fr)                                               # remove prostate data
   >>> fr                                                           # attempting to use fr results in a ValueError
@@ -199,8 +191,8 @@ delete all subparts.
 Models
 ++++++
 
-The model-building experience with this module is unique, especially for those coming 
-from a background in scikit-learn. Instead of using objects to build the model, 
+The model-building experience with this module is unique, especially for those coming
+from a background in scikit-learn. Instead of using objects to build the model,
 builder functions are provided in the top-level module, and the result of a call
 is a model object belonging to one of the following categories:
 
@@ -212,7 +204,7 @@ is a model object belonging to one of the following categories:
 
 To better demonstrate this concept, refer to the following example:
 
-  >>> fr = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate data
+  >>> fr = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate data
   >>>
   >>> fr[1] = fr[1].asfactor()                                     # make 2nd column a factor
   >>>
@@ -225,12 +217,12 @@ To better demonstrate this concept, refer to the following example:
   >>> m.summary()                                                  # print a model summary
 
 As you can see in the example, the result of the GLM call is a binomial model. This example also showcases
-an important feature-munging step needed for GLM to perform a classification task rather than a 
+an important feature-munging step needed for GLM to perform a classification task rather than a
 regression task. Namely, the second column is initially read as a numeric column,
-but it must be changed to a factor by way of the H2OVec operation `asfactor`. Let's take a look
+but it must be changed to a factor by way of the operation `asfactor`. Let's take a look
 at this more deeply:
 
-  >>> fr = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate data
+  >>> fr = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate data
   >>>
   >>> fr[1].isfactor()                                             # produces False
   >>>
@@ -249,10 +241,10 @@ at this more deeply:
 The above example shows how to properly deal with numeric columns you would like to use in a
 classification setting. Additionally, H2O can perform on-the-fly scoring of validation
 data and provide a host of metrics on the validation and training data. Here's an example
-of this functionality, where we additionally split the data set into three pieces for training, 
+of this functionality, where we additionally split the data set into three pieces for training,
 validation, and finally testing:
 
-  >>> fr = h2o.import_frame(path="smalldata/logreg/prostate.csv")  # import prostate
+  >>> fr = h2o.import_file(path="smalldata/logreg/prostate.csv")  # import prostate
   >>>
   >>> fr[1] = fr[1].asfactor()                                     # cast to factor
   >>>
@@ -312,7 +304,7 @@ H2O models exhibit a wide array of metrics for each of the model categories:
 In turn, each of these categories is associated with a corresponding H2OModelMetrics class.
 
 All algorithm calls return at least one type of metrics: the training set metrics. When building
-a model in H2O, you can optionally provide a validation set for on-the-fly evaluation of 
+a model in H2O, you can optionally provide a validation set for on-the-fly evaluation of
 holdout data. If the validation set is provided, then two types of metrics are returned:
 the training set metrics and the validation set metrics.
 
@@ -322,7 +314,7 @@ contains data that does not appear in either the training or validation sets: th
 test set metrics. While the returned object is an H2OModelMetrics rather than an H2O model,
 it can be queried in the same exact way. Here's an example:
 
-  >>> fr = h2o.import_frame(path="smalldata/iris/iris_wheader.csv")   # import iris
+  >>> fr = h2o.import_file(path="smalldata/iris/iris_wheader.csv")   # import iris
   >>>
   >>> r = fr[0].runif()                       # generate a random vector for splitting
   >>>
@@ -355,7 +347,7 @@ it can be queried in the same exact way. Here's an example:
 As you can see, the new model metrics object generated by calling `model_performance` on the
 model object supports all of the metric accessor methods as a model. For a complete list of
 the available metrics for various model categories, please refer to the "Metrics in H2O" section
-of this document. 
+of this document.
 
 Example of H2O on Hadoop
 ------------------------
@@ -378,8 +370,8 @@ Here is a brief example of H2O on Hadoop:
   --------------------------  ------------------------------------
   pathDataTrain = ["hdfs://192.168.1.10/user/data/data_train.csv"]
   pathDataTest = ["hdfs://192.168.1.10/user/data/data_test.csv"]
-  trainFrame = h2o.import_frame(path=pathDataTrain)
-  testFrame = h2o.import_frame(path=pathDataTest)
+  trainFrame = h2o.import_file(path=pathDataTrain)
+  testFrame = h2o.import_file(path=pathDataTest)
 
   #Parse Progress: [##################################################] 100%
   #Imported [hdfs://192.168.1.10/user/data/data_train.csv'] into cluster with 60000 rows and 500 cols
@@ -407,8 +399,10 @@ __version__ = "SUBST_PROJECT_VERSION"
 from h2o import *
 from model import *
 from demo import *
+from h2o_logging import *
 from frame import H2OFrame
-from expr import ExprNode
+from group_by import GroupBy
 from two_dim_table import H2OTwoDimTable
+from assembly import H2OAssembly
 
-__all__ = ["H2OFrame", "H2OConnection", "H2OTwoDimTable"]
+__all__ = ["H2OFrame", "H2OConnection", "H2OTwoDimTable", "GroupBy"]

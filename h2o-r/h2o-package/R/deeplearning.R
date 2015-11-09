@@ -1,27 +1,30 @@
 # ---------------------------- Deep Learning - Neural Network ---------------- #
 #' Build a Deep Learning Neural Network
 #'
-#' Performs Deep Learning neural networks on an \linkS4class{H2OFrame}
+#' Performs Deep Learning neural networks on an H2O Frame
 #'
 #' @param x A vector containing the \code{character} names of the predictors in the model.
 #' @param y The name of the response variable in the model.
-#' @param training_frame An \linkS4class{H2OFrame} object containing the variables in the model.
+#' @param training_frame An H2O Frame object containing the variables in the model.
 #' @param model_id (Optional) The unique id assigned to the resulting model. If
 #'        none is given, an id will automatically be generated.
-#' @param overwrite_with_best_model Logcial. If \code{TRUE}, overwrite the final model with the best model found during training. Defaults to \code{TRUE}.
-#' @param validation_frame (Optional) An \code{\link{H2OFrame}} object indicating the validation dataset used to contruct the confusion matrix. If left blank, this defaults to the training data when \code{nfolds = 0}
+#' @param overwrite_with_best_model Logical. If \code{TRUE}, overwrite the final model with the best model found during training. Defaults to \code{TRUE}.
+#' @param validation_frame An H2O Frame object indicating the validation dataset used to construct the confusion matrix. Defaults to NULL.  If left as NULL, this defaults to the training data when \code{nfolds = 0}.
 #' @param checkpoint "Model checkpoint (either key or H2ODeepLearningModel) to resume training with."
 #' @param autoencoder Enable auto-encoder for model building.
 #' @param use_all_factor_levels \code{Logical}. Use all factor levels of categorical variance.
-#'        Otherwise the first factor level is omittted (without loss of accuracy). Useful for
-#'        variable imporotances and auto-enabled for autoencoder.
+#'        Otherwise the first factor level is omitted (without loss of accuracy). Useful for
+#'        variable importances and auto-enabled for autoencoder.
 #' @param activation A string indicating the activation function to use. Must be either "Tanh",
 #'        "TanhWithDropout", "Rectifier", "RectifierWithDropout", "Maxout", or "MaxoutWithDropout"
 #' @param hidden Hidden layer sizes (e.g. c(100,100))
-#' @param epochs How many times the dataset shoud be iterated (streamed), can be fractional
+#' @param epochs How many times the dataset should be iterated (streamed), can be fractional
 #' @param train_samples_per_iteration Number of training samples (globally) per MapReduce iteration.
 #'        Special values are: \bold{0} one epoch; \bold{-1} all available data (e.g., replicated
 #'        training data); or \bold{-2} auto-tuning (default)
+#' @param target_ratio_comm_to_comp Target ratio of communication overhead to computation.
+#'        Only for multi-node operation and train_samples_per_iteration=-2 (auto-tuning).
+#'        Higher values can lead to faster convergence.
 #' @param seed Seed for random numbers (affects sampling) - Note: only reproducible when running
 #'        single threaded
 #' @param adaptive_rate \code{Logical}. Adaptive learning rate (ADAELTA)
@@ -31,24 +34,28 @@
 #' @param rate Learning rate (higher => less stable, lower => slower convergence)
 #' @param rate_annealing Learning rate annealing: \eqn{(rate)/(1 + rate_annealing*samples)}
 #' @param rate_decay Learning rate decay factor between layers (N-th layer: \eqn{rate*\alpha^(N-1)})
-#' @param momentum_start Initial momentum at the beginning of traning (try 0.5)
+#' @param momentum_start Initial momentum at the beginning of training (try 0.5)
 #' @param momentum_ramp Number of training samples for which momentum increases
-#' @param momentum_stable Final momentum after ther amp is over (try 0.99)
+#' @param momentum_stable Final momentum after the amp is over (try 0.99)
 #' @param nesterov_accelerated_gradient \code{Logical}. Use Nesterov accelerated gradient
 #'        (recommended)
 #' @param input_dropout_ratio A fraction of the features for each training row to be omitted from
 #'        training in order to improve generalization (dimension sampling).
-#' @param hidden_dropout_ratios Input layer dropout ration (can improve generalization) specify one
+#' @param hidden_dropout_ratios Input layer dropout ratio (can improve generalization) specify one
 #'        value per hidden layer, defaults to 0.5
-#' @param l1 L1 regularization (can add stability and improve generalization, cause many weights to
+#' @param l1 L1 regularization (can add stability and improve generalization, causes many weights to
 #'        become 0)
 #' @param l2 L2 regularization (can add stability and improve generalization, causes many weights to
 #'        be small)
 #' @param max_w2 Constraint for squared sum of incoming weights per unit (e.g. Rectifier)
 #' @param initial_weight_distribution Can be "Uniform", "UniformAdaptive", or "Normal"
-#' @param initial_weight_scale Unifrom: -value ... value, Normal: stddev
-#' @param loss Loss function: Automatic, CrossEntropy (for classification only), MeanSquare, Absolute
-#'        (experimental) or Huber (experimental)
+#' @param initial_weight_scale Uniform: -value ... value, Normal: stddev
+#' @param loss Loss function: "Automatic", "CrossEntropy" (for classification only), "Quadratic", "Absolute"
+#'        (experimental) or "Huber" (experimental)
+#' @param distribution A \code{character} string. The distribution function of the response.
+#'        Must be "AUTO", "bernoulli", "multinomial", "poisson", "gamma", "tweedie",
+#'        "laplace", "huber" or "gaussian"
+#' @param tweedie_power Tweedie power (only for Tweedie distribution, must be between 1 and 2)
 #' @param score_interval Shortest time interval (in secs) between model scoring
 #' @param score_training_samples Number of training set samples for scoring (0 for all)
 #' @param score_validation_samples Number of validation set samples for scoring (0 for all)
@@ -58,9 +65,17 @@
 #'        (-1 to disable)
 #' @param regression_stop Stopping criterion for regression error (MSE) on training data (-1 to
 #'        disable)
+#' @param stopping_rounds Early stopping based on convergence of stopping_metric.
+#'        Stop if simple moving average of length k of the stopping_metric does not improve
+#'        (by stopping_tolerance) for k=stopping_rounds scoring events.
+#'        Can only trigger after at least 2k scoring events. Use 0 to disable.
+#' @param stopping_metric Metric to use for convergence checking, only for _stopping_rounds > 0
+#'        Can be one of "AUTO", "deviance", "logloss", "MSE", "AUC", "r2", "misclassification".
+#' @param stopping_tolerance Relative tolerance for metric-based stopping criterion (if relative
+#'        improvement is not at least this much, stop)
 #' @param quiet_mode Enable quiet mode for less output to standard output
 #' @param max_confusion_matrix_size Max. size (number of classes) for confusion matrices to be shown
-#' @param max_hit_ratio_k Max number (top K) of predictions to use for hit ration computation(for
+#' @param max_hit_ratio_k Max number (top K) of predictions to use for hit ratio computation(for
 #'        multi-class only, 0 to disable)
 #' @param balance_classes Balance training data class counts via over/under-sampling (for imbalanced
 #'        data)
@@ -74,7 +89,7 @@
 #' @param variable_importances Compute variable importances for input features (Gedeon method) - can
 #'        be slow for large networks)
 #' @param fast_mode Enable fast mode (minor approximations in back-propagation)
-#' @param ignore_const_cols Ignore constant columns (no information can be gained anwyay)
+#' @param ignore_const_cols Ignore constant columns (no information can be gained anyway)
 #' @param force_load_balance Force extra load balancing to increase training speed for small
 #'        datasets (to keep all cores busy)
 #' @param replicate_training_data Replicate the entire training dataset onto every node for faster
@@ -82,14 +97,14 @@
 #' @param single_node_mode Run on a single node for fine-tuning of model parameters
 #' @param shuffle_training_data Enable shuffling of training data (recommended if training data is
 #'        replicated and train_samples_per_iteration is close to \eqn{numRows*numNodes}
-#' @param sparse Sparse data handling (Experimental)
+#' @param sparse Sparse data handling (more efficient for data with lots of 0 values)
 #' @param col_major Use a column major weight matrix for input layer. Can speed up forward
 #'        propagation, but might slow down backpropagation (Experimental)
 #' @param average_activation Average activation for sparse auto-encoder (Experimental)
 #' @param sparsity_beta Sparsity regularization (Experimental)
 #' @param max_categorical_features Max. number of categorical features, enforced via hashing
 #'        Experimental)
-#' @param reproducible Force reproducibility on small data (will be slow - only uses 1 thread)
+#' @param reproducible Force reproducibility on small data (requires setting the \code{seed} argument and this will be slow - only uses 1 thread)
 #' @param export_weights_and_biases Whether to export Neural Network weights and biases to H2O
 #'        Frames"
 #' @param offset_column Specify the offset column.
@@ -97,30 +112,34 @@
 #' @param nfolds (Optional) Number of folds for cross-validation. If \code{nfolds >= 2}, then \code{validation} must remain empty.
 #' @param fold_column (Optional) Column with cross-validation fold index assignment per observation
 #' @param fold_assignment Cross-validation fold assignment scheme, if fold_column is not specified
-#'        Must be "Random" or "Modulo"
+#'        Must be "AUTO", "Random" or "Modulo"
+#' @param keep_cross_validation_predictions Whether to keep the predictions of the cross-validation models
 #' @param ... extra parameters to pass onto functions (not implemented)
 #' @seealso \code{\link{predict.H2OModel}} for prediction.
 #' @examples
+#' \donttest{
 #' library(h2o)
-#' localH2O <- h2o.init()
+#' h2o.init()
 #' iris.hex <- as.h2o(iris)
 #' iris.dl <- h2o.deeplearning(x = 1:4, y = 5, training_frame = iris.hex)
 #'
 #' # now make a prediction
 #' predictions <- h2o.predict(iris.dl, iris.hex)
+#' }
 #'
 #' @export
 h2o.deeplearning <- function(x, y, training_frame,
                              model_id = "",
                              overwrite_with_best_model,
-                             validation_frame,
+                             validation_frame = NULL,
                              checkpoint,
                              autoencoder = FALSE,
                              use_all_factor_levels = TRUE,
                              activation = c("Rectifier", "Tanh", "TanhWithDropout", "RectifierWithDropout", "Maxout", "MaxoutWithDropout"),
                              hidden= c(200, 200),
-                             epochs = 10.0,
+                             epochs = 10,
                              train_samples_per_iteration = -2,
+                             target_ratio_comm_to_comp = 0.05,
                              seed,
                              adaptive_rate = TRUE,
                              rho = 0.99,
@@ -139,13 +158,18 @@ h2o.deeplearning <- function(x, y, training_frame,
                              max_w2 = Inf,
                              initial_weight_distribution = c("UniformAdaptive", "Uniform", "Normal"),
                              initial_weight_scale = 1,
-                             loss = c("Automatic", "CrossEntropy", "MeanSquare", "Absolute", "Huber"),
+                             loss = c("Automatic", "CrossEntropy", "Quadratic", "Absolute", "Huber"),
+                             distribution = c("AUTO","gaussian", "bernoulli", "multinomial", "poisson", "gamma", "tweedie", "laplace", "huber"),
+                             tweedie_power = 1.5,
                              score_interval = 5,
                              score_training_samples,
                              score_validation_samples,
                              score_duty_cycle,
                              classification_stop,
                              regression_stop,
+                             stopping_rounds=5,
+                             stopping_metric=c("AUTO", "deviance", "logloss", "MSE", "AUC", "r2", "misclassification"),
+                             stopping_tolerance=0,
                              quiet_mode,
                              max_confusion_matrix_size,
                              max_hit_ratio_k,
@@ -172,32 +196,30 @@ h2o.deeplearning <- function(x, y, training_frame,
                              weights_column = NULL,
                              nfolds = 0,
                              fold_column = NULL,
-                             fold_assignment = c("Random","Modulo"),
-                             ...)
+                             fold_assignment = c("AUTO","Random","Modulo"),
+                             keep_cross_validation_predictions = FALSE)
 {
-  # Pass over ellipse parameters and deprecated parameters
-  dots <- .model.ellipses(list(...))
 
-  # Training_frame and validation_frame may be a key or an H2OFrame object
-  if (!inherits(training_frame, "H2OFrame"))
+  # Training_frame and validation_frame may be a key or an H2O Frame object
+  if (!is.Frame(training_frame))
     tryCatch(training_frame <- h2o.getFrame(training_frame),
              error = function(err) {
-               stop("argument \"training_frame\" must be a valid H2OFrame or key")
+               stop("argument \"training_frame\" must be a valid Frame or key")
              })
-  if (!missing(validation_frame)) {
-    if (!inherits(validation_frame, "H2OFrame"))
+  if (!is.null(validation_frame)) {
+    if (!is.Frame(validation_frame))
         tryCatch(validation_frame <- h2o.getFrame(validation_frame),
                  error = function(err) {
-                   stop("argument \"validation_frame\" must be a valid H2OFrame or key")
+                   stop("argument \"validation_frame\" must be a valid Frame or key")
                  })
   }
   # Parameter list to send to model builder
   parms <- list()
   parms$training_frame <- training_frame
   args <- .verify_dataxy(training_frame, x, y, autoencoder)
-  if( !missing(offset_column) )  args$x_ignore <- args$x_ignore[!( offset_column == args$x_ignore )]
-  if( !missing(weights_column) ) args$x_ignore <- args$x_ignore[!( weights_column == args$x_ignore )]
-  if( !missing(fold_column) ) args$x_ignore <- args$x_ignore[!( fold_column == args$x_ignore )]
+  if( !missing(offset_column) && !is.null(offset_column))  args$x_ignore <- args$x_ignore[!( offset_column == args$x_ignore )]
+  if( !missing(weights_column) && !is.null(weights_column)) args$x_ignore <- args$x_ignore[!( weights_column == args$x_ignore )]
+  if( !missing(fold_column) && !is.null(fold_column)) args$x_ignore <- args$x_ignore[!( fold_column == args$x_ignore )]
   parms$response_column <- args$y
   parms$ignored_columns <- args$x_ignore
   if(!missing(model_id))
@@ -222,6 +244,8 @@ h2o.deeplearning <- function(x, y, training_frame,
     parms$epochs <- epochs
   if(!missing(train_samples_per_iteration))
     parms$train_samples_per_iteration <- train_samples_per_iteration
+  if(!missing(target_ratio_comm_to_comp))
+    parms$target_ratio_comm_to_comp <- target_ratio_comm_to_comp
   if(!missing(seed))
     parms$seed <- seed
   if(!missing(adaptive_rate))
@@ -258,8 +282,17 @@ h2o.deeplearning <- function(x, y, training_frame,
     parms$initial_weight_distribution <- initial_weight_distribution
   if(!missing(initial_weight_scale))
     parms$initial_weight_scale <- initial_weight_scale
-  if(!missing(loss))
-    parms$loss <- loss
+  if(!missing(loss)) {
+    if(loss == "MeanSquare") {
+      warning("Loss name 'MeanSquare' is deprecated; please use 'Quadratic' instead.")
+      parms$loss <- "Quadratic"
+    } else
+      parms$loss <- loss
+  }
+  if (!missing(distribution))
+    parms$distribution <- distribution
+  if (!missing(tweedie_power))
+    parms$tweedie_power <- tweedie_power
   if(!missing(score_interval))
     parms$score_interval <- score_interval
   if(!missing(score_training_samples))
@@ -272,6 +305,9 @@ h2o.deeplearning <- function(x, y, training_frame,
     parms$classification_stop <- classification_stop
   if(!missing(regression_stop))
     parms$regression_stop <- regression_stop
+  if(!missing(stopping_rounds)) parms$stopping_rounds <- stopping_rounds
+  if(!missing(stopping_metric)) parms$stopping_metric <- stopping_metric
+  if(!missing(stopping_tolerance)) parms$stopping_tolerance <- stopping_tolerance
   if(!missing(quiet_mode))
     parms$quiet_mode <- quiet_mode
   if(!missing(max_confusion_matrix_size))
@@ -320,70 +356,72 @@ h2o.deeplearning <- function(x, y, training_frame,
   if( !missing(weights_column) )            parms$weights_column         <- weights_column
   if( !missing(fold_column) )               parms$fold_column            <- fold_column
   if( !missing(fold_assignment) )           parms$fold_assignment        <- fold_assignment
-  .h2o.createModel(training_frame@conn, 'deeplearning', parms)
+  if( !missing(keep_cross_validation_predictions) )  parms$keep_cross_validation_predictions  <- keep_cross_validation_predictions
+  .h2o.modelJob('deeplearning', parms)
 }
 
 #' Anomaly Detection via H2O Deep Learning Model
 #'
-#' Detect anomalies in a H2O dataset using a H2O deep learning model with
+#' Detect anomalies in an H2O dataset using an H2O deep learning model with
 #' auto-encoding.
 #'
 #' @param object An \linkS4class{H2OAutoEncoderModel} object that represents the
 #'        model to be used for anomaly detection.
-#' @param data An \linkS4class{H2OFrame} object.
-#' @return Returns an \linkS4class{H2OFrame} object containing the
-#'         reconstruction MSE.
+#' @param data An H2O Frame object.
+#' @param per_feature Whether to return the per-feature squared reconstruction error
+#' @return Returns an H2O Frame object containing the
+#'         reconstruction MSE or the per-feature squared error.
 #' @seealso \code{\link{h2o.deeplearning}} for making an H2OAutoEncoderModel.
 #' @examples
+#' \donttest{
 #' library(h2o)
-#' localH2O = h2o.init()
+#' h2o.init()
 #' prosPath = system.file("extdata", "prostate.csv", package = "h2o")
-#' prostate.hex = h2o.importFile(localH2O, path = prosPath)
+#' prostate.hex = h2o.importFile(path = prosPath)
 #' prostate.dl = h2o.deeplearning(x = 3:9, training_frame = prostate.hex, autoencoder = TRUE,
 #'                                hidden = c(10, 10), epochs = 5)
 #' prostate.anon = h2o.anomaly(prostate.dl, prostate.hex)
 #' head(prostate.anon)
+#' prostate.anon.per.feature = h2o.anomaly(prostate.dl, prostate.hex, per_feature=TRUE)
+#' head(prostate.anon.per.feature)
+#' }
 #' @export
-h2o.anomaly <- function(object, data) {
-  url <- paste0('Predictions/models/', object@model_id, '/frames/', data@frame_id)
-  res <- .h2o.__remoteSend(object@conn, url, method = "POST", reconstruction_error=TRUE)
+h2o.anomaly <- function(object, data, per_feature=FALSE) {
+  url <- paste0('Predictions/models/', object@model_id, '/frames/',h2o.getId(data))
+  res <- .h2o.__remoteSend(url, method = "POST", reconstruction_error=TRUE, reconstruction_error_per_feature=per_feature)
   key <- res$model_metrics[[1L]]$predictions$frame_id$name
-
   h2o.getFrame(key)
 }
 
 #' Feature Generation via H2O Deep Learning Model
 #'
-#' Extract the non-linea feature from an H2O data set using an H2O deep learning
+#' Extract the non-linear feature from an H2O data set using an H2O deep learning
 #' model.
 #' @param object An \linkS4class{H2OModel} object that represents the deep
 #' learning model to be used for feature extraction.
-#' @param data An \linkS4class{H2OFrame} object.
+#' @param data An H2O Frame object.
 #' @param layer Index of the hidden layer to extract.
-#' @return Returns an \linkS4class{H2OFrame} object with as many features as the
+#' @return Returns an H2O Frame object with as many features as the
 #'         number of units in the hidden layer of the specified index.
 #' @seealso \code{link{h2o.deeplearning}} for making deep learning models.
 #' @examples
+#' \donttest{
 #' library(h2o)
-#' localH2O = h2o.init()
+#' h2o.init()
 #' prosPath = system.file("extdata", "prostate.csv", package = "h2o")
-#' prostate.hex = h2o.importFile(localH2O, path = prosPath)
+#' prostate.hex = h2o.importFile(path = prosPath)
 #' prostate.dl = h2o.deeplearning(x = 3:9, y = 2, training_frame = prostate.hex,
 #'                                hidden = c(100, 200), epochs = 5)
 #' prostate.deepfeatures_layer1 = h2o.deepfeatures(prostate.dl, prostate.hex, layer = 1)
 #' prostate.deepfeatures_layer2 = h2o.deepfeatures(prostate.dl, prostate.hex, layer = 2)
 #' head(prostate.deepfeatures_layer1)
 #' head(prostate.deepfeatures_layer2)
+#' }
 #' @export
 h2o.deepfeatures <- function(object, data, layer = 1) {
   index = layer - 1
-  tmp <- !.is.eval(data)
-  if( tmp ) {
-    temp_key <- data@frame_id
-    .h2o.eval.frame(conn = data@conn, ast = data@mutable$ast, frame_id = temp_key)
-  }
-  url <- paste0('Predictions/models/', object@model_id, '/frames/', data@frame_id)
-  res <- .h2o.__remoteSend(object@conn, url, method = "POST", deep_features_hidden_layer=index)
+  url <- paste0('Predictions/models/', object@model_id, '/frames/', h2o.getId(data))
+  res <- .h2o.__remoteSend(url, method = "POST", deep_features_hidden_layer=index)
   key <- res$predictions$name
 
   h2o.getFrame(key)

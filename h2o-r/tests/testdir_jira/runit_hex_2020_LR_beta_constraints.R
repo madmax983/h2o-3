@@ -3,13 +3,13 @@
 ## runs glm with and without beta contraints which will be checked
 ## against glmnet's results.
 
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../h2o-runit.R')
 
-test.LR.betaConstraints <- function(conn){
+
+
+test.LR.betaConstraints <- function(){
 
   #Log.info("Importing prostate dataset...")
-  prostate_h2o <- h2o.importFile(conn, locate("smalldata/prostate/prostate.csv"))
+  prostate_h2o <- h2o.importFile(locate("smalldata/prostate/prostate.csv"))
 
   #Log.info("Create beta constraints frame...")
   myX <-  c("AGE","RACE", "DPROS", "DCAPS", "PSA", "VOL", "GLEASON")
@@ -58,7 +58,7 @@ test.LR.betaConstraints <- function(conn){
 
   full_test <- sapply(c("binomial", "gaussian"), run_glm)
   print(full_test)
-  testEnd()
+  
 }
 
 doTest("GLM Test: LR w/ Beta Constraints", test.LR.betaConstraints)

@@ -1,26 +1,40 @@
 package water;
 
-import java.io.*;
-import java.net.MalformedURLException;
-import java.net.URLDecoder;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
-import org.eclipse.jetty.server.*;
+import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.server.Handler;
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.bio.SocketConnector;
 import org.eclipse.jetty.server.handler.AbstractHandler;
 import org.eclipse.jetty.server.handler.HandlerCollection;
 import org.eclipse.jetty.server.handler.HandlerWrapper;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 
+import java.io.EOFException;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.MalformedURLException;
+import java.net.URLDecoder;
+import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import water.UDPRebooted.ShutdownTsk;
 import water.api.H2OErrorV3;
 import water.exceptions.H2OAbstractRuntimeException;
 import water.exceptions.H2OFailException;
+import water.fvec.Frame;
 import water.fvec.UploadFileVec;
 import water.init.NodePersistentStorage;
 import water.util.FileUtils;
@@ -37,10 +51,21 @@ public class JettyHTTPD {
   //------------------------------------------------------------------------------------------
 
   private static final ThreadLocal<Long> _startMillis = new ThreadLocal<>();
+  private static final ThreadLocal<Integer> _status = new ThreadLocal<>();
+
   private static final ThreadLocal<String> _userAgent = new ThreadLocal<>();
 
   private static void startRequestLifecycle() {
     _startMillis.set(System.currentTimeMillis());
+    _status.set(999);
+  }
+
+  private static void setStatus(int sc) {
+    _status.set(sc);
+  }
+
+  private static int getStatus() {
+    return _status.get();
   }
 
   protected static long getStartMillis() {
@@ -60,6 +85,20 @@ public class JettyHTTPD {
    */
   public static String getUserAgent() {
     return _userAgent.get();
+  }
+
+  //------------------------------------------------------------------------------------------
+  //------------------------------------------------------------------------------------------
+
+  protected static void setResponseStatus(HttpServletResponse response, int sc) {
+    setStatus(sc);
+    response.setStatus(sc);
+  }
+
+  @SuppressWarnings("unused")
+  protected static void sendResponseError(HttpServletResponse response, int sc, String msg) throws java.io.IOException {
+    setStatus(sc);
+    response.sendError(sc, msg);
   }
 
   //------------------------------------------------------------------------------------------
@@ -131,7 +170,7 @@ public class JettyHTTPD {
     _acceptRequests = true;
   }
 
-  protected void createServer(ServerConnector connector) throws Exception {
+  protected void createServer(Connector connector) throws Exception {
     _server.setConnectors(new Connector[]{connector});
     registerHandlers(_server);
     _server.start();
@@ -139,7 +178,15 @@ public class JettyHTTPD {
 
   protected void startHttp() throws Exception {
     _server = new Server();
-    ServerConnector connector=new ServerConnector(_server);
+
+//    QueuedThreadPool p = new QueuedThreadPool();
+//    p.setName("jetty-h2o");
+//    p.setMinThreads(3);
+//    p.setMaxThreads(50);
+//    p.setMaxIdleTimeMs(3000);
+//    _server.setThreadPool(p);
+
+    Connector connector=new SocketConnector();
     if (_ip != null) {
       connector.setHost(_ip);
     }
@@ -176,6 +223,8 @@ public class JettyHTTPD {
     context.addServlet(H2oNpsBinServlet.class,   "/3/NodePersistentStorage.bin/*");
     context.addServlet(H2oPostFileServlet.class, "/3/PostFile.bin");
     context.addServlet(H2oPostFileServlet.class, "/3/PostFile");
+    context.addServlet(H2oDatasetServlet.class,   "/3/DownloadDataset");
+    context.addServlet(H2oDatasetServlet.class,   "/3/DownloadDataset.bin");
     context.addServlet(H2oDefaultServlet.class,  "/");
 
     Handler[] handlers = {gh, rhh, eh1, context};
@@ -202,6 +251,7 @@ public class JettyHTTPD {
     }
   }
 
+  @SuppressWarnings("unused")
   protected void handle1(String target,
                          Request baseRequest,
                          HttpServletRequest request,
@@ -239,7 +289,7 @@ public class JettyHTTPD {
         Matcher m = p.matcher(uri);
         boolean b = m.matches();
         if (!b) {
-          response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+          setResponseStatus(response, HttpServletResponse.SC_BAD_REQUEST);
           response.getWriter().write("Improperly formatted URI");
           return;
         }
@@ -249,10 +299,13 @@ public class JettyHTTPD {
         NodePersistentStorage nps = H2O.getNPS();
         AtomicLong length = new AtomicLong();
         InputStream is = nps.get(categoryName, keyName, length);
+        if (length.get() > (long)Integer.MAX_VALUE) {
+          throw new Exception("NPS value size exceeds Integer.MAX_VALUE");
+        }
         response.setContentType("application/octet-stream");
-        response.setContentLengthLong(length.get());
+        response.setContentLength((int) length.get());
         response.addHeader("Content-Disposition", "attachment; filename=" + keyName + ".flow");
-        response.setStatus(HttpServletResponse.SC_OK);
+        setResponseStatus(response, HttpServletResponse.SC_OK);
         OutputStream os = response.getOutputStream();
         water.util.FileUtils.copyStream(is, os, 2048);
       }
@@ -273,7 +326,7 @@ public class JettyHTTPD {
         Matcher m = p.matcher(uri);
         boolean b = m.matches();
         if (!b) {
-          response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+          setResponseStatus(response, HttpServletResponse.SC_BAD_REQUEST);
           response.getWriter().write("Improperly formatted URI");
           return;
         }
@@ -317,7 +370,7 @@ public class JettyHTTPD {
           destination_frame = "upload" + Key.rand();
         }
         if (!validKeyName(destination_frame)) {
-          response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+          setResponseStatus(response, HttpServletResponse.SC_BAD_REQUEST);
           response.getWriter().write("Invalid key name, contains illegal characters");
           return;
         }
@@ -355,7 +408,7 @@ public class JettyHTTPD {
   private static InputStream extractPartInputStream (HttpServletRequest request, HttpServletResponse response) throws IOException{
     String ct = request.getContentType();
     if (! ct.startsWith("multipart/form-data")) {
-      response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+      setResponseStatus(response, HttpServletResponse.SC_BAD_REQUEST);
       response.getWriter().write("Content type must be multipart/form-data");
       return null;
     }
@@ -363,7 +416,7 @@ public class JettyHTTPD {
     String boundaryString;
     int idx = ct.indexOf("boundary=");
     if (idx < 0) {
-      response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+      setResponseStatus(response, HttpServletResponse.SC_BAD_REQUEST);
       response.getWriter().write("Boundary missing");
       return null;
     }
@@ -404,7 +457,7 @@ public class JettyHTTPD {
       H2OError error = ee.toH2OError(uri);
 
       Log.warn("Caught exception: " + error.toString());
-      response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+      setResponseStatus(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
 
       // Note: don't use Schema.schema(version, error) because we have to work at bootstrap:
       try {
@@ -424,7 +477,7 @@ public class JettyHTTPD {
         error._http_status = HttpResponseStatus.BAD_REQUEST.getCode();
       else if (e instanceof MalformedURLException)
         error._http_status = HttpResponseStatus.BAD_REQUEST.getCode();
-      response.setStatus(error._http_status);
+      setResponseStatus(response, error._http_status);
 
       Log.warn("Caught exception: " + error.toString());
 
@@ -451,6 +504,51 @@ public class JettyHTTPD {
     response.setHeader("X-h2o-build-project-version", H2O.ABV.projectVersion());
     response.setHeader("X-h2o-rest-api-version-max", Integer.toString(water.api.RequestServer.H2O_REST_API_VERSION));
     response.setHeader("X-h2o-cluster-id", Long.toString(H2O.CLUSTER_ID));
+  }
+
+  public static class H2oDatasetServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest request,
+                         HttpServletResponse response) throws IOException, ServletException {
+      String uri = getDecodedUri(request);
+      try {
+        boolean use_hex = false;
+        String f_name = request.getParameter("frame_id");
+        String hex_string = request.getParameter("hex_string");
+        if (f_name == null) {
+          throw new RuntimeException("Cannot find value for parameter \'frame_id\'");
+        }
+        if (hex_string != null && hex_string.toLowerCase().equals("true")) {
+          use_hex = true;
+        }
+        
+        Frame dataset = DKV.getGet(f_name);
+        // TODO: Find a way to determing the hex_string parameter. It should not always be false
+        InputStream is = dataset.toCSV(true, use_hex);
+        response.setContentType("application/octet-stream");
+        // Clean up the file name
+        int x = f_name.length()-1;
+        boolean dot=false;
+        for( ; x >= 0; x-- )
+          if( !Character.isLetterOrDigit(f_name.charAt(x)) && f_name.charAt(x)!='_' )
+            if( f_name.charAt(x)=='.' && !dot ) dot=true;
+            else break;
+        String suggested_fname = f_name.substring(x+1).replace(".hex", ".csv");
+        if( !suggested_fname.endsWith(".csv") )
+          suggested_fname = suggested_fname+".csv";
+        f_name = suggested_fname;
+        response.addHeader("Content-Disposition", "attachment; filename=" + f_name);
+        setResponseStatus(response, HttpServletResponse.SC_OK);
+        OutputStream os = response.getOutputStream();
+        water.util.FileUtils.copyStream(is, os, 2048);
+      }
+      catch (Exception e) {
+        sendErrorResponse(response, e, uri);
+      }
+      finally {
+        logRequest("GET", request, response);
+      }
+    }
   }
 
   @SuppressWarnings("serial")
@@ -522,7 +620,7 @@ public class JettyHTTPD {
         String choppedNanoStatus = resp.status.substring(0, 3);
         assert (choppedNanoStatus.length() == 3);
         int sc = Integer.parseInt(choppedNanoStatus);
-        response.setStatus(sc);
+        setResponseStatus(response, sc);
 
         response.setContentType(resp.mimeType);
 
@@ -535,16 +633,39 @@ public class JettyHTTPD {
         }
 
         OutputStream os = response.getOutputStream();
-        InputStream is = resp.data;
-        FileUtils.copyStream(is, os, 1024);
+        if (resp instanceof NanoHTTPD.StreamResponse) {
+          NanoHTTPD.StreamResponse ssr = (NanoHTTPD.StreamResponse) resp;
+          ssr.streamWriter.writeTo(os);
+        } else {
+          InputStream is = resp.data;
+          FileUtils.copyStream(is, os, 1024);
+        }
       } finally {
         logRequest(method, request, response);
-
         // Handle shutdown if it was requested.
         if (H2O.getShutdownRequested()) {
-          H2O.shutdown(0);
+          (new Thread() {
+            public void run() {
+              boolean [] confirmations = new boolean[H2O.CLOUD.size()];
+              if (H2O.SELF.index() >= 0) {
+                confirmations[H2O.SELF.index()] = true;
+              }
+              for(H2ONode n:H2O.CLOUD._memary) {
+                if(n != H2O.SELF)
+                  new RPC(n, new ShutdownTsk(H2O.SELF,n.index(), 1000, confirmations)).call();
+              }
+              try { Thread.sleep(2000); }
+              catch (Exception ignore) {}
+              int failedToShutdown = 0;
+              // shutdown failed
+              for(boolean b:confirmations)
+                if(!b) failedToShutdown++;
+              Log.info("Orderly shutdown: " + (failedToShutdown > 0? failedToShutdown + " nodes failed to shut down! ":"") + " Shutting down now.");
+              H2O.closeAll();
+              H2O.exit(failedToShutdown);
+            }
+          }).start();
         }
-
         endTransaction();
       }
     }
@@ -552,8 +673,9 @@ public class JettyHTTPD {
 
   //--------------------------------------------------
 
+  @SuppressWarnings("unused")
   protected static void logRequest(String method, HttpServletRequest request, HttpServletResponse response) {
-    Log.httpd(method, request.getRequestURI(), response.getStatus(), System.currentTimeMillis() - getStartMillis());
+    Log.httpd(method, request.getRequestURI(), getStatus(), System.currentTimeMillis() - getStartMillis());
   }
 
   private static String readLine(InputStream in) throws IOException {

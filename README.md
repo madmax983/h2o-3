@@ -2,11 +2,16 @@
 
 [![Join the chat at https://gitter.im/h2oai/h2o-3](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/h2oai/h2o-3?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-H2O makes Hadoop do math! H2O scales statistics, machine learning, and math over Big Data. H2O is extensible and users can build blocks using simple math legos in the core. H2O keeps familiar interfaces like R, Python, Excel, & JSON so that Big Data enthusiasts & experts can explore, munge, model, and score datasets using a range of simple to advanced algorithms. Data collection is easy. Decision making is hard. H2O makes it fast and easy to derive insights from your data through faster and better predictive modeling. H2O allows online scoring and modeling in a single platform.
+H2O scales statistics, machine learning, and math over Big Data. 
+
+H2O uses familiar interfaces like R, Python, Scala, the Flow notebook graphical interface, Excel, & JSON so that Big Data enthusiasts & experts can explore, munge, model, and score datasets using a range of algorithms including advanced ones like Deep Learning. H2O is extensible so that developers can add data transformations and model algorithms of their choice and access them through all of those clients.
+
+Data collection is easy. Decision making is hard. H2O makes it fast and easy to derive insights from your data through faster and better predictive modeling. H2O allows online scoring and modeling in a single platform.
 
 * [Downloading H2O-3](#Downloading)
 * [Open Source Resources](#Resources)
-* [Using H2O Dev Artifacts](#Artifacts)
+    * [Issue tracking](#IssueTracking) 
+* [Using H2O-3 Code Artifacts (libraries)](#Artifacts)
 * [Building H2O-3](#Building)
 * [Launching H2O after Building](#Launching)
 * [Building H2O on Hadoop](#BuildingHadoop)
@@ -27,9 +32,29 @@ While most of this README is written for developers who do their own builds, mos
 <a name="Resources"></a>
 ## 2. Open Source Resources
 
+Most people interact with three primary open source resources:  **GitHub** (which you've already found), **JIRA** (for issue tracking), and **h2ostream** (a community discussion forum).
+
+<a name="IssueTracking"></a>
+### 2.1 Issue tracking
+
+You can browse and create new issues in our open source **JIRA**:  <http://jira.h2o.ai>
+
+*  You can **browse** and search for **issues** without logging in to JIRA:
+    1.  Click the `Issues` menu
+    1.  Click `Search for issues`
+*  To **create** an **issue** (either a bug or a feature request), please create yourself an account first:
+    1.  Click the `Log In` button on the top right of the screen
+    1.  Click `Create an acccount` near the bottom of the login box
+    1.  Once you have created an account and logged in, use the `Create` button on the menu to create an issue
+    1.  Create H2O-3 issues in the [PUBDEV](https://0xdata.atlassian.net/projects/PUBDEV/issues) project
+
+> (Note: There is only one issue tracking system for the project.  GitHub issues are not enabled, you must use JIRA.)
+
+### 2.2 List of open source resources
+
 *  GitHub
     * <https://github.com/h2oai/h2o-3>
-*  JIRA (PUBDEV contains issues for the current H2O-3 project; PUB contains issues for H2O-Classic)
+*  JIRA - file issues here ([PUBDEV](https://0xdata.atlassian.net/projects/PUBDEV/issues) contains issues for the current H2O-3 project)
     * <http://jira.h2o.ai>
 *  h2ostream community forum - ask your questions here
     * Web: <https://groups.google.com/d/forum/h2ostream>
@@ -113,27 +138,43 @@ java -jar build/h2o.jar
 git clone https://github.com/h2oai/h2o-3.git
 cd h2o-3
 ./gradlew syncSmalldata
+./gradlew syncRPackages
 ./gradlew build
 ```
 
->**Note**: Running tests starts five test JVMs that form an H2O cluster and requires at least 8GB of RAM (preferably 16GB of RAM).
+>**Notes**: 
+>
+> - Running tests starts five test JVMs that form an H2O cluster and requires at least 8GB of RAM (preferably 16GB of RAM).
+> - Running `./gradlew syncRPackages` is supported on Windows, OS X, and Linux, and is strongly recommended but not required. `./gradlew syncRPackages` ensures a complete and consistent environment with pre-approved versions of the packages required for tests and builds. The packages can be installed manually, but we recommend setting an ENV variable and using `./gradlew syncRPackages`. To set the ENV variable, use the following format (where `${WORKSPACE} can be any path):
+>  
+>  ```
+> mkdir -p ${WORKSPACE}/Rlibrary
+export R_LIBS_USER=${WORKSPACE}/Rlibrary
+```
 
 #### Recipe 3:  Pull, clean, build, and run tests
 
 ```
 git pull
 ./gradlew syncSmalldata
+./gradlew syncRPackages
 ./gradlew clean
 ./gradlew build
 ```
 
 #### Notes
 
-A `./gradlew clean` is recommended after each `git pull`.
+ - We recommend using `./gradlew clean` after each `git pull`.
 
-Skip tests by adding `-x test` at the end the gradle build command line.  Tests typically run for 7-10 minutes on a Macbook Pro laptop with 4 CPUs (8 hyperthreads) and 16 GB of RAM.
+- Skip tests by adding `-x test` at the end the gradle build command line.  Tests typically run for 7-10 minutes on a Macbook Pro laptop with 4 CPUs (8 hyperthreads) and 16 GB of RAM.
 
-Syncing smalldata is not required after each pull, but if tests fail due to missing data files, then try `./gradlew syncSmalldata` as the first troubleshooting step.  Syncing smalldata grabs data files from AWS S3 to the smalldata directory in your workspace.  The sync is incremental.  Do not check in these files.  The smalldata directory is in .gitignore.  If you do not run any tests, you do not need the smalldata directory.
+- Syncing smalldata is not required after each pull, but if tests fail due to missing data files, then try `./gradlew syncSmalldata` as the first troubleshooting step.  Syncing smalldata downloads data files from AWS S3 to the smalldata directory in your workspace.  The sync is incremental.  Do not check in these files.  The smalldata directory is in .gitignore.  If you do not run any tests, you do not need the smalldata directory.
+- Running `./gradlew syncRPackages` is supported on Windows, OS X, and Linux, and is strongly recommended but not required. `./gradlew syncRPackages` ensures a complete and consistent environment with pre-approved versions of the packages required for tests and builds. The packages can be installed manually, but we recommend setting an ENV variable and using `./gradlew syncRPackages`. To set the ENV variable, use the following format (where `${WORKSPACE} can be any path):
+
+  ```
+  mkdir -p ${WORKSPACE}/Rlibrary
+  export R_LIBS_USER=${WORKSPACE}/Rlibrary
+  ```
 
 ### 4.2. Setup on all Platforms
 
@@ -142,6 +183,16 @@ Syncing smalldata is not required after each pull, but if tests fail due to miss
     pip install grip
     pip install tabulate
     pip install wheel
+    pip install scikit-learn
+
+Python tests require:
+
+    pip install scikit-learn
+    pip install numpy
+    pip install scipy
+    pip install pandas
+    pip install statsmodels
+    pip install patsy
 
 ### 4.3. Setup on Windows
 
@@ -173,7 +224,7 @@ Install [Node.js](http://nodejs.org/download/) and add the installed directory `
 To install these packages from within an R session, enter:
 
     R> install.packages("RCurl")
-    R> install.packages("rjson")
+    R> install.packages("jsonlite")
     R> install.packages("statmod")
     R> install.packages(c("devtools", "roxygen2", "testthat"))
 
@@ -188,7 +239,7 @@ To manually install packages, download the releases of the following R packages:
 - [digest](http://cran.r-project.org/package=digest)
 - [Rcpp](http://cran.r-project.org/package=Rcpp)
 - [RCurl](http://cran.r-project.org/package=RCurl)
-- [rjson](http://cran.r-project.org/package=rjson)
+- [jsonlite](http://cran.r-project.org/package=jsonlite)
 - [roxygen2](http://cran.r-project.org/package=roxygen2)
 - [statmod](http://cran.r-project.org/package=statmod)
 - [stringr](http://cran.r-project.org/package=stringr)
@@ -198,7 +249,7 @@ To manually install packages, download the releases of the following R packages:
     cd Downloads
     R CMD INSTALL bitops_x.x-x.zip
     R CMD INSTALL RCurl_x.xx-x.x.zip
-    R CMD INSTALL rjson_x.x.xx.zip
+    R CMD INSTALL jsonlite_x.x.xx.zip
     R CMD INSTALL statmod_x.x.xx.zip
     R CMD INSTALL Rcpp_x.xx.x.zip
     R CMD INSTALL digest_x.x.x.zip
@@ -262,7 +313,7 @@ Install [R](http://www.r-project.org/) and add the bin directory to your PATH if
 Install the following R packages: 
 
 - [RCurl](http://cran.r-project.org/package=RCurl)
-- [rjson](http://cran.r-project.org/package=rjson)
+- [jsonlite](http://cran.r-project.org/package=jsonlite)
 - [statmod](http://cran.r-project.org/package=statmod)
 - [devtools](http://cran.r-project.org/package=devtools)
 - [roxygen2](http://cran.r-project.org/package=roxygen2) 
@@ -272,7 +323,7 @@ Install the following R packages:
     cd Downloads
     R CMD INSTALL bitops_x.x-x.tgz
     R CMD INSTALL RCurl_x.xx-x.x.tgz
-    R CMD INSTALL rjson_x.x.xx.tgz
+    R CMD INSTALL jsonlite_x.x.xx.tgz
     R CMD INSTALL statmod_x.x.xx.tgz
     R CMD INSTALL Rcpp_x.xx.x.tgz
     R CMD INSTALL digest_x.x.x.tgz
@@ -284,7 +335,7 @@ Install the following R packages:
 To install these packages from within an R session:
 
     R> install.packages("RCurl")
-    R> install.packages("rjson")
+    R> install.packages("jsonlite")
     R> install.packages("statmod")
     R> install.packages(c("devtools", "roxygen2", "testthat"))
 
@@ -377,7 +428,8 @@ For users of Eclipse, generate project files with:
 
 Pre-built H2O-on-Hadoop zip files are available on the [download page](http://h2o.ai/download).  Each Hadoop distribution version has a separate zip file in h2o-3.
 
-To build H2O with Hadoop support yourself, enter the following from the top-level h2o-3 directory:
+To build H2O with Hadoop support yourself, first install sphinx for python: `pip install sphinx`
+Then start the build by entering  the following from the top-level h2o-3 directory:
 
     (export BUILD_HADOOP=1; ./gradlew build -x test)
     ./gradlew dist
@@ -394,7 +446,7 @@ You need to:
 1.  Add a new driver directory and assembly directory (each with a `build.gradle` file) in `h2o-hadoop`
 2.  Add these new projects to `h2o-3/settings.gradle`
 3.  Add the new Hadoop version to `HADOOP_VERSIONS` in `make-dist.sh`
-4.  Add the new Hadoop version to the `wget` list in `h2o-dist/index.html`
+4.  Add the new Hadoop version to the list in `h2o-dist/buildinfo.json`
 
 ### Debugging HDFS
 
@@ -482,7 +534,7 @@ Documentation for each bleeding edge nightly build is available on the [nightly 
 ## 9. Community
 
 We will breathe & sustain a vibrant community with the focus of taking a software engineering approach to data science and empowering everyone interested in data to be able to hack data using math and algorithms.
-Join us on google groups [h2ostream](https://groups.google.com/forum/#!forum/h2ostream).
+Join us on google groups at [h2ostream](https://groups.google.com/forum/#!forum/h2ostream) and feel free to file issues directly on our [JIRA](http://jira.h2o.ai). 
 
 Team & Committers
 
@@ -529,8 +581,6 @@ Stacie Spreitzer
 Vinod Iyengar
 Charlene Windom
 Parag Sanghavi
-
-
 ```
 
 <a name="Advisors"></a>

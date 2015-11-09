@@ -1,15 +1,18 @@
 package hex.kmeans;
 
+import hex.ModelMetrics;
 import hex.ModelMetricsClustering;
 import hex.SplitFrame;
 import org.junit.*;
 import water.DKV;
 import water.Key;
+import water.Scope;
 import water.TestUtil;
 import water.exceptions.H2OModelBuilderIllegalArgumentException;
 import water.fvec.Frame;
 import water.fvec.NFSFileVec;
 import water.parser.ParseDataset;
+import water.util.ArrayUtils;
 import water.util.FrameUtils;
 import water.util.Log;
 import water.util.MathUtils;
@@ -33,12 +36,35 @@ public class KMeansTest extends TestUtil {
     try {
       job = new KMeans(parms);
       kmm = job.trainModel().get();
+      checkConsistency(kmm);
     } finally {
       if (job != null) job.remove();
     }
     for( int i=0; i<parms._k; i++ )
       Assert.assertTrue( "Seed: "+seed, kmm._output._size[i] != 0 );
     return kmm;
+  }
+
+  //PUBDEV-781: Double-check the training metrics (gathered by computeStatsFillModel) and the scoring logic by scoring on the training set
+  private static void checkConsistency(KMeansModel kmm) {
+    //FIXME: TODO: remove this false, and fix the algo! PUBDEV-781
+    if (false) {
+      KMeansModel.KMeansParameters parms = kmm._parms;
+      Assert.assertTrue((ArrayUtils.sum(kmm._output._size) - parms.train().numRows()) <= 1);
+
+//    Log.info(kmm._output._model_summary);
+//    Log.info(kmm._output._scoring_history);
+//    Log.info(((ModelMetricsClustering)kmm._output._training_metrics).createCentroidStatsTable().toString());
+      kmm.score(parms.train()).delete(); //this scores on the training data and appends a ModelMetrics
+      ModelMetricsClustering mm = (ModelMetricsClustering) ModelMetrics.getFromDKV(kmm, parms.train());
+      Assert.assertTrue(Arrays.equals(mm._size, ((ModelMetricsClustering) kmm._output._training_metrics)._size));
+      for (int i = 0; i < parms._k; ++i) {
+        Assert.assertTrue(MathUtils.compare(mm._withinss[i], ((ModelMetricsClustering) kmm._output._training_metrics)._withinss[i], 1e-6, 1e-6));
+      }
+      Assert.assertTrue(MathUtils.compare(mm._totss, ((ModelMetricsClustering) kmm._output._training_metrics)._totss, 1e-6, 1e-6));
+      Assert.assertTrue(MathUtils.compare(mm._betweenss, ((ModelMetricsClustering) kmm._output._training_metrics)._betweenss, 1e-6, 1e-6));
+      Assert.assertTrue(MathUtils.compare(mm._tot_withinss, ((ModelMetricsClustering) kmm._output._training_metrics)._tot_withinss, 1e-6, 1e-6));
+    }
   }
 
   @Test public void testIris() {
@@ -75,20 +101,20 @@ public class KMeansTest extends TestUtil {
 
   @Test public void testArrests() {
     // Initialize using first 4 rows of USArrests
-    Frame init = frame(ard(ard(13.2, 236, 58, 21.2),
-                           ard(10.0, 263, 48, 44.5),
-                           ard( 8.1, 294, 80, 31.0),
-                           ard( 8.8, 190, 50, 19.5)));
+    Frame init = ArrayUtils.frame(ard(ard(13.2, 236, 58, 21.2),
+                                      ard(10.0, 263, 48, 44.5),
+                                      ard(8.1, 294, 80, 31.0),
+                                      ard(8.8, 190, 50, 19.5)));
 
     // R k-means results for comparison
-    double totssR = 355807.821599;
+    double totssR = 355807.8216;
     double btwssR = 318155.162076;
     double[] wssR = new double[] {2546.350000, 6705.906667, 9136.642857, 19263.760000};
     double[][] centersR = ard(ard( 4.270000,  87.550000, 59.750000, 14.390000),
                               ard( 8.214286, 173.285714, 70.642857, 22.842857),
                               ard(11.766667, 257.916667, 68.416667, 28.933333),
                               ard(11.950000, 316.500000, 68.000000, 26.700000));
-    Frame predR = frame(ar("predict"), ear(1, 1, 2, 0, 1, 0, 3, 1, 2, 0, 3, 3, 1, 3,
+    Frame predR = ArrayUtils.frame(ar("predict"), ear(1, 1, 2, 0, 1, 0, 3, 1, 2, 0, 3, 3, 1, 3,
                                            3, 3, 3, 1, 3, 2, 0, 1, 3, 1, 0, 3, 3, 1,
                                            3, 0, 1, 1, 2, 3, 3, 0, 0, 3, 0, 1, 3, 0,
                                            0, 3, 3, 0, 0, 3, 3, 0));
@@ -198,7 +224,7 @@ public class KMeansTest extends TestUtil {
 
   @Test
   public void testCentroids(){
-    Frame fr = frame(ard(d(1,0,0),d(0,1,0),d(0,0,1)));
+    Frame fr = ArrayUtils.frame(ard(d(1,0,0),d(0,1,0),d(0,0,1)));
     Frame fr2=null;
     try {
       KMeansModel.KMeansParameters parms = new KMeansModel.KMeansParameters();
@@ -240,7 +266,7 @@ public class KMeansTest extends TestUtil {
   }
 
   @Test public void test1Dimension() {
-    Frame fr = frame(ard(d(1,0),d(0,0),d(-1,0),d(4,0),d(1,0),d(2,0),d(0,0),d(0,0)));
+    Frame fr = ArrayUtils.frame(ard(d(1,0),d(0,0),d(-1,0),d(4,0),d(1,0),d(2,0),d(0,0),d(0,0)));
     Frame fr2=null;
     try {
       KMeansModel.KMeansParameters parms = new KMeansModel.KMeansParameters();
@@ -267,7 +293,7 @@ public class KMeansTest extends TestUtil {
 
   // Negative test - expect to throw IllegalArgumentException
   @Test (expected = H2OModelBuilderIllegalArgumentException.class) public void testTooManyK() {
-    Frame fr = frame(ard(d(1,0),d(0,0),d(1,0),d(2,0),d(0,0),d(0,0)));
+    Frame fr = ArrayUtils.frame(ard(d(1,0),d(0,0),d(1,0),d(2,0),d(0,0),d(0,0)));
     Frame fr2=null;
     KMeansModel kmm = null;
     KMeansModel.KMeansParameters parms;
@@ -325,7 +351,7 @@ public class KMeansTest extends TestUtil {
       try {
         fr = parse_test_file("smalldata/iris/iris_wheader.csv");
 
-        SplitFrame sf = new SplitFrame(Key.make());
+        SplitFrame sf = new SplitFrame();
         sf.dataset = fr;
         sf.ratios = new double[] { 0.5, 0.5 };
         sf.destination_frames = new Key[] { Key.make("train.hex"), Key.make("test.hex")};
@@ -468,4 +494,59 @@ public class KMeansTest extends TestUtil {
       }
     }
   }
+
+  double _ref_betweenss = 528.5603501427154;
+  double _ref_tot_withinss = 167.43963679143025;
+  double _ref_totss = 695.9999869341457;
+  double _ref_withinss[] = new double[]{ 67.82696780398858, 48.15831080234685, 43.36554094593457};
+  long _ref_size[] = new long[]{54, 50, 46};
+
+  @Test
+  public void testNfolds() {
+    Frame tfr = null, vfr = null;
+    KMeansModel kmeans = null;
+
+    Scope.enter();
+    try {
+      tfr = parse_test_file("smalldata/iris/iris_wheader.csv");
+      DKV.put(tfr);
+      KMeansModel.KMeansParameters parms = new KMeansModel.KMeansParameters();
+      parms._train = tfr._key;
+      parms._seed = 0xdecaf;
+      parms._k = 3;
+      parms._nfolds = 3;
+
+      // Build a first model; all remaining models should be equal
+      KMeans job = new KMeans(parms);
+      kmeans = job.trainModel().get();
+      checkConsistency(kmeans);
+
+      ModelMetricsClustering mm = (ModelMetricsClustering)kmeans._output._cross_validation_metrics;
+      assertEquals(_ref_betweenss, mm._betweenss, 1e-8);
+      assertEquals(_ref_tot_withinss, mm._tot_withinss, 1e-8);
+      assertEquals(_ref_totss, mm._totss, 1e-6);
+      for (int i=0; i<parms._k; ++i) {
+        Assert.assertTrue(
+                MathUtils.compare(
+                        ((ModelMetricsClustering) kmeans._output._training_metrics)._withinss[i],
+                        _ref_withinss[i],
+                        1e-6, 1e-6)
+        );
+        Assert.assertEquals(
+                ((ModelMetricsClustering) kmeans._output._training_metrics)._size[i],
+                _ref_size[i]
+        );
+      }
+      job.remove();
+    } finally {
+      if (tfr != null) tfr.remove();
+      if (vfr != null) vfr.remove();
+      if (kmeans != null) {
+        kmeans.deleteCrossValidationModels();
+        kmeans.delete();
+      }
+      Scope.exit();
+    }
+  }
+
 }

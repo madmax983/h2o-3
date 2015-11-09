@@ -23,7 +23,7 @@ public class Interaction extends Job<Frame> {
   transient public int[] _factors = new int[0];
 
   public Interaction(Key<Frame> dest, String desc) { super(dest, (desc == null ? "CreateFrame" : desc)); }
-  public Interaction() { super(Key.make(), "CreateFrame"); }
+  public Interaction() { super(Key.<Frame>make(), "CreateFrame"); }
 
   public Frame execImpl() {
     try {
@@ -36,7 +36,7 @@ public class Interaction extends Job<Frame> {
       for (String v: _factor_columns) {
         int idx = source_frame.find(v);
         if (idx >= 0) {
-          if (!source_frame.vecs()[idx].isEnum()) {
+          if (!source_frame.vecs()[idx].isCategorical()) {
             throw new IllegalArgumentException("Column " + v + " is not categorical.");
           }
           _factors[count++] = idx;
@@ -45,7 +45,7 @@ public class Interaction extends Job<Frame> {
         }
       }
       CreateInteractions in = new CreateInteractions(this, this._key);
-      return start(in, in.work()).get();
+      return start(in, in.work(), true).get();
     } catch( Throwable t ) {
       throw t;
     } finally {

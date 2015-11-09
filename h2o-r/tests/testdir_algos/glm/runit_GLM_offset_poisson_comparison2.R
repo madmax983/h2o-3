@@ -1,11 +1,11 @@
 ### This tests offset in glm on real data ######
 
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../../h2o-runit.R')
+
+
 
 test <- function(h) {
     Log.info("Importing lung.csv data...\n")
-    lung.hex <- h2o.uploadFile(conn, locate("smalldata/glm_test/lung.csv"))
+    lung.hex <- h2o.uploadFile(locate("smalldata/glm_test/lung.csv"))
     lung.hex$log_pop <- log(lung.hex$pop)
 
     lung.r <- read.csv(locate("smalldata/glm_test/lung.csv"), header = TRUE)
@@ -29,7 +29,7 @@ test <- function(h) {
     Log.info(paste("H2O residual deviance: ", h2o.rd, ", and R residual deviance: ", r.rd))
     expect_equal(h2o.rd, r.rd, tolerance = 1e-4)
 
-	testEnd()
+	
 }
 
 doTest("GLM poisson offset comparision2: ", test)

@@ -6,13 +6,13 @@
 ##
 
 
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../../h2o-runit.R')
 
 
-test.dim <- function(conn) {
+
+
+test.dim <- function() {
   Log.info("Uploading logreg/princeton/cuse.dat")
-  hex <- h2o.importFile(conn, locate("smalldata/logreg/prostate.csv"), "pros.hex")
+  hex <- h2o.importFile(locate("smalldata/logreg/prostate.csv"), "pros.hex")
   
   Rdat <- read.csv(locate("smalldata/logreg/prostate.csv"))
   
@@ -52,7 +52,7 @@ test.dim <- function(conn) {
   h2oTOR <- data.frame(as.data.frame(h2oCol) & 5)
   Log.info("as.data.frame(h2oCol) & 5")
   expect_that(dim(h2oTOR), equals(dim(h2oColAmpFive)))
-  testEnd()
+  
 }
 
 

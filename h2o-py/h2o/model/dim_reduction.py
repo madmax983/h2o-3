@@ -1,14 +1,47 @@
-"""
-DimReduction Models
-"""
-
+from model_base import ModelBase
 from metrics_base import *
+
 
 class H2ODimReductionModel(ModelBase):
 
-    def __init__(self, dest_key, model_json):
-        super(H2ODimReductionModel, self).__init__(dest_key, model_json,H2ODimReductionModelMetrics)
+    def num_iterations(self):
+      """
+      Get the number of iterations that it took to converge or reach max iterations.
 
+      :return: number of iterations (integer)
+      """
+      o = self._model_json["output"]
+      return o["model_summary"].cell_values[0][o["model_summary"].col_header.index('number_of_iterations')]
+    
+    def objective(self):
+      """
+      Get the final value of the objective function from the GLRM model.
+
+      :return: final objective value (double)
+      """
+      o = self._model_json["output"]
+      return o["model_summary"].cell_values[0][o["model_summary"].col_header.index('final_objective_value')]
+   
+    def final_step(self):
+      """
+      Get the final step size from the GLRM model.
+
+      :return: final step size (double)
+      """
+      o = self._model_json["output"]
+      return o["model_summary"].cell_values[0][o["model_summary"].col_header.index('final_step_size')]
+    
+    def archetypes(self):
+      """
+      :return: the archetypes (Y) of the GLRM model.
+      """
+      o = self._model_json["output"]
+      yvals = o["archetypes"].cell_values
+      archetypes = []
+      for yidx, yval in enumerate(yvals):
+        archetypes.append(list(yvals[yidx])[1:])
+      return archetypes
+    
     def screeplot(self, type="barplot", **kwargs):
         """
         Produce the scree plot
@@ -26,7 +59,7 @@ class H2ODimReductionModel(ModelBase):
             print "matplotlib is required for this function!"
             return
 
-        variances = [s**2 for s in self._model_json['output']['pc_importance'].cell_values[0][1:]]
+        variances = [s**2 for s in self._model_json['output']['importance'].cell_values[0][1:]]
         plt.xlabel('Components')
         plt.ylabel('Variances')
         plt.title('Scree Plot')

@@ -1,108 +1,208 @@
-"""
-Clustering Models
-"""
-
-from metrics_base import *
+from model_base import ModelBase
 
 
 class H2OClusteringModel(ModelBase):
 
-  def __init__(self, dest_key, model_json):
-    super(H2OClusteringModel, self).__init__(dest_key, model_json,H2OClusteringModelMetrics)
-
-  def size(self, train=False, valid=False):
+  def size(self, train=False, valid=False, xval=False):
     """
     Get the sizes of each cluster.
 
-    :param train: If train is True, then return the sizes of clusters based on the training data. If both train and valid are False, then train=True is assumed.
-    :param valid: If valid is True, then return the sizes of clusters based on the validation data. If both train and valid are True, then validation data is returned.
-    :return: the sizes of clusters for either the training or validation dataset.
-    """
-    tm = ModelBase._get_metrics(self,*ModelBase._train_or_valid(train, valid))
-    return [ v[2] for v in  tm._metric_json["centroid_stats"].cell_values]
+    If all are False (default), then return the training metric value.
+    If more than one options is set to True, then return a dictionary of metrics where
+    the keys are "train", "valid", and "xval"
 
-  def num_iterations(self, train=False, valid=False):
+    Parameters
+    ----------
+      train : bool, optional
+        If True, then return cluster sizes for the training data.
+      valid : bool, optional
+        If True, then return the cluster sizes for the validation data.
+      xval : bool, optional
+        If True, then return the cluster sizes for each of the cross-validated splits.
+
+    Returns
+    -------
+      Returns the cluster sizes for the specified key(s).
+    """
+    tm = ModelBase._get_metrics(self, train, valid, xval)
+    m = {}
+    for k,v in zip(tm.keys(),tm.values()): m[k] = None if v is None else [ v[2] for v in  v._metric_json["centroid_stats"].cell_values]
+    return m.values()[0] if len(m) == 1 else m
+
+  def num_iterations(self):
     """
     Get the number of iterations that it took to converge or reach max iterations.
 
-    :return: number of iterations (integer)
+    Returns
+    -------
+      The number of iterations (integer).
     """
     o = self._model_json["output"]
     return o["model_summary"].cell_values[0][o["model_summary"].col_header.index('number_of_iterations')]
 
-  def betweenss(self, train, valid):
+  def betweenss(self, train=False, valid=False, xval=False):
     """
     Get the between cluster sum of squares.
 
-    :param train: If train is True, then return the average between cluster sum of squares of clusters based on the training data. If both train and valid are False, then train=True is assumed.
-    :param valid: If valid is True, then return the average between cluster sum of squares of clusters based on the validation data. If both train and valid are True, then validation data is returned.
-    :return: The average between cluster sum of squares for either the training or validation dataset.
-    """
-    tm = ModelBase._get_metrics(self,*ModelBase._train_or_valid(train, valid))
-    return tm._metric_json["betweenss"]
+    If all are False (default), then return the training metric value.
+    If more than one options is set to True, then return a dictionary of metrics where
+    the keys are "train", "valid", and "xval".
 
-  def totss(self, train=False, valid=False):
-    """
-    Get the total sum of squares to grand mean.
+    Parameters
+    ----------
+      train : bool, optional
+        If True, then return the between cluster sum of squares value for the
+        training data.
+      valid : bool, optional
+        If True, then return the between cluster sum of squares value for the
+        validation data.
+      xval : bool, optional
+        If True, then return the between cluster sum of squares value for each of
+        the cross-validated splits.
 
-    :param train: If train is True, then return the average cluster sum of squares of clusters based on the training data. If both train and valid are False, then train=True is assumed.
-    :param valid: If valid is True, then return the average cluster sum of squares of clusters based on the validation data. If both train and valid are True, then validation data is returned.
-    :return: The average cluster sum of squares for either the training or validation dataset.
+    Returns
+    -------
+      Returns the between sum of squares values for the specified key(s).
     """
-    tm = ModelBase._get_metrics(self,*ModelBase._train_or_valid(train, valid))
-    return tm._metric_json["avg_ss"]
+    tm = ModelBase._get_metrics(self, train, valid, xval)
+    m = {}
+    for k,v in zip(tm.keys(),tm.values()): m[k] = None if v is None else v._metric_json["betweenss"]
+    return m.values()[0] if len(m) == 1 else m
 
-  def tot_withinss(self, train=False, valid=False):
+  def totss(self, train=False, valid=False, xval=False):
+    """
+    Get the total sum of squares.
+
+    If all are False (default), then return the training metric value.
+    If more than one options is set to True, then return a dictionary of metrics where
+    the keys are "train", "valid", and "xval".
+
+    Parameters
+    ----------
+      train : bool, optional
+        If True, then return the total sum of squares value for the training
+        data.
+      valid : bool, optional
+        If True, then return the total sum of squares value for the validation
+        data.
+      xval : bool, optional
+        If True, then return the total sum of squares value for each of the
+        cross-validated splits.
+
+    Returns
+    -------
+      Returns the total sum of squares values for the specified key(s).
+    """
+    tm = ModelBase._get_metrics(self, train, valid, xval)
+    m = {}
+    for k,v in zip(tm.keys(),tm.values()): m[k] = None if v is None else v._metric_json["totss"]
+    return m.values()[0] if len(m) == 1 else m
+
+  def tot_withinss(self, train=False, valid=False, xval=False):
     """
     Get the total within cluster sum of squares.
 
-    :param train: If train is True, then return the average within cluster sum of squares of clusters based on the training data. If both train and valid are False, then train=True is assumed.
-    :param valid: If valid is True, then return the average within cluster sum of squares of clusters based on the validation data. If both train and valid are True, then validation data is returned.
-    :return: The average within cluster sum of squares for either the training or validation dataset.
-    """
-    tm = ModelBase._get_metrics(self,*ModelBase._train_or_valid(train, valid))
-    return tm._metric_json["avg_within_ss"]
+    If all are False (default), then return the training metric value.
+    If more than one options is set to True, then return a dictionary of metrics where
+    the keys are "train", "valid", and "xval".
 
-  def withinss(self, train=False, valid=False):
+    Parameters
+    ----------
+      train : bool, optional
+        If True, then return the total within cluster sum of squares value for
+        the training data.
+      valid : bool, optional
+        If True, then return the total within cluster sum of squares value for
+        the validation data.
+      xval : bool, optional
+        If True, then return the total within cluster sum of squares value for
+        each of the cross-validated splits.
+
+    Returns
+    -------
+      Returns the total within cluster sum of squares values for the specified key(s).
+    """
+    tm = ModelBase._get_metrics(self, train, valid, xval)
+    m = {}
+    for k,v in zip(tm.keys(),tm.values()): m[k] = None if v is None else v._metric_json["tot_withinss"]
+    return m.values()[0] if len(m) == 1 else m
+
+  def withinss(self, train=False, valid=False, xval=False):
     """
     Get the within cluster sum of squares for each cluster.
 
-    :param train: If train is True, then return the within cluster sum of squares for each cluster based on the training data. If both train and valid are False, then train=True is assumed.
-    :param valid: If valid is True, then return the within cluster sum of squares for each cluster based on the validation data. If both train and valid are True, then validation data is returned.
-    :return: The within cluster sum of squares for each cluster on either the training or validation dataset.
-    """
-    tm = ModelBase._get_metrics(self,*ModelBase._train_or_valid(train, valid))
-    return [ v[-1] for v in  tm._metric_json["centroid_stats"].cell_values]
+    If all are False (default), then return the training metric value.
+    If more than one options is set to True, then return a dictionary of metrics where
+    the keys are "train", "valid", and "xval".
 
-  def centroid_stats(self,train=False,valid=False):
+    Parameters
+    ----------
+      train : bool, optional
+        If True, then return the within cluster sum of squares value for the
+        training data.
+      valid : bool, optional
+        If True, then return the within cluster sum of squares value for the
+        validation data.
+      xval : bool, optional
+        If True, then return the within cluster sum of squares value for each of
+        the cross-validated splits.
+
+    Returns
+    -------
+      Returns the total sum of squares values for the specified key(s).
+    """
+    tm = ModelBase._get_metrics(self, train, valid, xval)
+    m = {}
+    for k,v in zip(tm.keys(),tm.values()): m[k] = None if v is None else [ z[-1] for z in v._metric_json["centroid_stats"].cell_values]
+    return m.values()[0] if len(m) == 1 else m
+
+  def centroid_stats(self, train=False, valid=False, xval=False):
     """
     Get the centroid statistics for each cluster.
 
-    :param train: If train is True, then return the centroid statistics based on the training data. If both train and valid are False, then train=True is assumed.
-    :param valid: If valid is True, then return the centroid statistics based on the validation data. If both train and valid are True, then validation data is returned.
-    :return: The centroid statistics on either the training or validation dataset.
+    If all are False (default), then return the training metric value.
+    If more than one options is set to True, then return a dictionary of metrics where
+    the keys are "train", "valid", and "xval".
+
+    Parameters
+    ----------
+      train : bool, optional
+        If True, then return the centroid statistics for the training data.
+      valid : bool, optional
+        If True, then return the centroid statistics for the validation data.
+      xval : bool, optional
+        If True, then return the centroid statistics for each of the cross-validated
+        splits.
+
+    Returns
+    -------
+      Returns the centroid statistics for the specified key(s).
     """
-    tm = ModelBase._get_metrics(self,*ModelBase._train_or_valid(train, valid))
-    return tm._metric_json["centroid_stats"]
+    tm = ModelBase._get_metrics(self, train, valid, xval)
+    m = {}
+    for k,v in zip(tm.keys(),tm.values()): m[k] = None if v is None else v._metric_json["centroid_stats"]
+    return m.values()[0] if len(m) == 1 else m
 
   def centers(self):
     """
-    :return: the centers for the kmeans model.
+    Returns
+    -------
+      The centers for the KMeans model.
     """
     o = self._model_json["output"]
     cvals = o["centers"].cell_values
-    centers = []
-    for cidx, cval in enumerate(cvals):
-      centers.append(list(cvals[cidx])[1:])
+    centers = [list(cval[1:]) for cval in cvals]
+    centers = [list(x) for x in zip(*centers)]
     return centers
 
   def centers_std(self):
     """
-    :return: the standardized centers for the kmeans model.
+    Returns
+    -------
+      The standardized centers for the kmeans model.
     """
     o = self._model_json["output"]
     cvals = o["centers_std"].cell_values
-    centers_std = []
-    for cidx, cval in enumerate(cvals):
-      centers_std.append(list(cvals[cidx])[1:])
+    centers_std = [list(cval[1:]) for cval in cvals]
+    centers_std = [list(x) for x in zip(*centers_std)]
     return centers_std

@@ -1,7 +1,7 @@
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../h2o-runit.R')
 
-test.pubdev_1704 <- function(conn) {
+
+
+test.pubdev_1704 <- function() {
     df <- as.h2o(iris)
     df$fold <- as.h2o(ceiling(runif(nrow(iris))*5))
 
@@ -33,7 +33,7 @@ test.pubdev_1704 <- function(conn) {
     #m <- h2o.glm(x=1:4,y=5,training_frame=df,nfolds=5, fold_assignment="Random")
     #print(m)
 
-  testEnd()
+  
 }
 
 doTest("PUBDEV-1704", test.pubdev_1704)

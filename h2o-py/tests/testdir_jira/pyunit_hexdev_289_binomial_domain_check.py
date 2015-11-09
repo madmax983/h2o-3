@@ -1,13 +1,17 @@
 import sys
-sys.path.insert(1, "../../")
+sys.path.insert(1,"../../")
 import h2o
+from tests import pyunit_utils
 
-def domain_check(ip, port):
-    h2o.init(ip, port)
 
-    air_train = h2o.import_frame(path=h2o.locate("smalldata/airlines/AirlinesTrain.csv.zip"))
+
+
+def domain_check():
+    
+
+    air_train = h2o.import_file(path=pyunit_utils.locate("smalldata/airlines/AirlinesTrain.csv.zip"))
     air_train.show()
-    air_test = h2o.import_frame(path=h2o.locate("smalldata/airlines/AirlinesTest.csv.zip"))
+    air_test = h2o.import_file(path=pyunit_utils.locate("smalldata/airlines/AirlinesTest.csv.zip"))
     air_test.show()
 
     actual_domain = [u'YES',u'NO']
@@ -83,5 +87,9 @@ def domain_check(ip, port):
     assert not domain_diff, "There's a difference between the actual ({0}) and the computed ({1}) domains of the " \
                             "The difference is {2}".format(actual_domain, computed_domain, domain_diff)
 
+
+
 if __name__ == "__main__":
-    h2o.run_test(sys.argv, domain_check)
+    pyunit_utils.standalone_test(domain_check)
+else:
+    domain_check()

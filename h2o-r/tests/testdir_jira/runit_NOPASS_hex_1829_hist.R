@@ -3,16 +3,16 @@
 # histograms in R
 ######################################################################
 
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-options(echo=TRUE)
-source('../h2o-runit.R')
 
-test.hex_1829 <- function(conn){
+options(echo=TRUE)
+
+
+test.hex_1829 <- function(){
 
   heading("BEGIN TEST")
   Log.info("Import small prostate dataset")
   path <- locate("smalldata/logreg/prostate.csv")
-  hex <- h2o.importFile(conn, path, destination_frame="p.hex")
+  hex <- h2o.importFile(path, destination_frame="p.hex")
 
   Log.info("Create small numeric vectors")
   age <- hex$AGE
@@ -45,7 +45,7 @@ test.hex_1829 <- function(conn){
   run_check_hist(age, age.R, "AGE", breaks = c(43, 60, 70, 80))
   run_check_hist(vol, vol.R, "VOL", breaks = as.numeric(qx))
   
-  testEnd()
+  
 }
 
 doTest("HEX-1829 Test: Create histograms in R from H2OFrame objects", test.hex_1829)

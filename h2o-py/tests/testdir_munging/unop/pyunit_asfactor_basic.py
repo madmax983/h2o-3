@@ -1,13 +1,17 @@
 import sys
-sys.path.insert(1, "../../../")
+sys.path.insert(1,"../../")
 import h2o
+from tests import pyunit_utils
 
-def asfactor_basic(ip,port):
-  # Connect to h2o
-  h2o.init(ip,port)
+
+
+
+def asfactor_basic():
+  
+  
 
   #Log.info("Printing out the head of the cars datasets")
-  h2oframe =  h2o.import_frame(path=h2o.locate("smalldata/junit/cars.csv"))
+  h2oframe =  h2o.import_file(path=pyunit_utils.locate("smalldata/junit/cars.csv"))
   h2oframe.show()
 
   h2oframe['cylinders'].show()
@@ -28,5 +32,9 @@ def asfactor_basic(ip,port):
   bar = h2oframe["cylinders"].isfactor()
   assert bar, "expected the bar H2OVec to be a factor"
 
+
+
 if __name__ == "__main__":
-  h2o.run_test(sys.argv, asfactor_basic)
+    pyunit_utils.standalone_test(asfactor_basic)
+else:
+  asfactor_basic()

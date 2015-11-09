@@ -1,19 +1,21 @@
 package hex.deeplearning;
 
-import hex.DataInfo;
-import hex.ModelBuilder;
-import hex.ModelCategory;
+import hex.*;
 import hex.deeplearning.DeepLearningModel.DeepLearningModelOutput;
 import hex.schemas.DeepLearningV3;
 import hex.schemas.ModelBuilderSchema;
 import water.*;
+import water.exceptions.H2OIllegalArgumentException;
 import water.exceptions.H2OModelBuilderIllegalArgumentException;
 import water.fvec.Frame;
 import water.fvec.RebalanceDataSet;
 import water.fvec.Vec;
 import water.init.Linpack;
 import water.init.NetworkTest;
-import water.util.*;
+import water.util.ArrayUtils;
+import water.util.Log;
+import water.util.MRUtils;
+import water.util.PrettyPrint;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -53,10 +55,11 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
   @Override public boolean isSupervised() { return !_parms._autoencoder; }
 
   /** Start the DeepLearning training Job on an F/J thread.
-   * @param work*/
-  @Override public Job<DeepLearningModel> trainModelImpl(long work) {
+   * @param work
+   * @param restartTimer*/
+  @Override protected Job<DeepLearningModel> trainModelImpl(long work, boolean restartTimer) {
     // We look at _train before init(true) is called, so step around that here:
-    return start(new DeepLearningDriver(), work);
+    return start(new DeepLearningDriver(), work, restartTimer);
   }
 
   @Override
@@ -88,15 +91,18 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
    * @return
    */
   static DataInfo makeDataInfo(Frame train, Frame valid, DeepLearningParameters parms) {
+    double x = 0.782347234;
+    boolean identityLink = new Distribution(parms._distribution, parms._tweedie_power).link(x) == x;
     return new DataInfo(
             Key.make(), //dest key
             train,
             valid,
             parms._autoencoder ? 0 : 1, //nResponses
             parms._autoencoder || parms._use_all_factor_levels, //use all FactorLevels for auto-encoder
-            parms._autoencoder ? DataInfo.TransformType.NORMALIZE : DataInfo.TransformType.STANDARDIZE, //transform predictors
-            train.lastVec().isEnum() ? DataInfo.TransformType.NONE : DataInfo.TransformType.STANDARDIZE, //transform response (only used if nResponses > 0)
+            parms._autoencoder ? DataInfo.TransformType.NORMALIZE : parms._sparse ? DataInfo.TransformType.DESCALE : DataInfo.TransformType.STANDARDIZE, //transform predictors
+            train.lastVec().isCategorical() ? DataInfo.TransformType.NONE : identityLink ? DataInfo.TransformType.STANDARDIZE : DataInfo.TransformType.NONE, //transform response for regression with identity link
             parms._missing_values_handling == DeepLearningParameters.MissingValuesHandling.Skip, //whether to skip missing
+            false, // do not replace NAs in numeric cols with mean
             true,  // always add a bucket for missing values
             parms._weights_column != null, // observation weights
             parms._offset_column != null,
@@ -136,31 +142,45 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
   }
 
   @Override
-  public void modifyParmsForCrossValidationSplits(int i, int N) {
-    super.modifyParmsForCrossValidationSplits(i, N);
+  public void modifyParmsForCrossValidationSplits(int i, int N, Key<Model> model_id) {
+    super.modifyParmsForCrossValidationSplits(i, N, model_id);
     if (_parms._overwrite_with_best_model) {
-      warn("_overwrite_with_best_model",
-              "Disabling overwrite_with_best_model for cross-validation split " + (i+1) + "/" + N + ": No early stopping.");
+      if (!_parms._quiet_mode)
+        warn("_overwrite_with_best_model",
+                "Disabling overwrite_with_best_model for cross-validation split " + (i+1) + "/" + N + ": No early stopping.");
       _parms._overwrite_with_best_model = false;
     }
   }
 
   @Override
-  public void modifyParmsForCrossValidationMainModel(int N) {
-    super.modifyParmsForCrossValidationMainModel(N);
+  public void modifyParmsForCrossValidationMainModel(int N, Key<Model>[] cvModelBuilderKeys) {
+    super.modifyParmsForCrossValidationMainModel(N, cvModelBuilderKeys);
     if (_parms._overwrite_with_best_model) {
-      warn("_overwrite_with_best_model", "Disabling overwrite_with_best_model for cross-validation main model: No early stopping.");
+      if (!_parms._quiet_mode)
+        warn("_overwrite_with_best_model", "Disabling overwrite_with_best_model for cross-validation main model: No early stopping.");
       _parms._overwrite_with_best_model = false;
+    }
+    if (cvModelBuilderKeys !=null) {
+      if (_parms._stopping_rounds > 0) {
+        double[] epochs = new double[cvModelBuilderKeys.length];
+        for (int i=0;i<epochs.length;++i) {
+          epochs[i] = ((DeepLearningModel)DKV.getGet((((DeepLearning)DKV.getGet(cvModelBuilderKeys[i])).dest()))).last_scored().epoch_counter;
+        }
+        _parms._epochs = ArrayUtils.sum(epochs)/epochs.length;
+        if (!_parms._quiet_mode)
+          warn("_epochs", "Setting optimal _epochs to " + _parms._epochs + " for cross-validation main model based on early stopping of cross-validation models.");
+        _parms._stopping_rounds = 0;
+        if (!_parms._quiet_mode)
+          warn("_stopping_rounds", "Disabling convergence-based early stopping for cross-validation main model.");
+      }
     }
   }
 
   public class DeepLearningDriver extends H2O.H2OCountedCompleter<DeepLearningDriver> {
+    protected DeepLearningDriver() { super(true); } // bump priority of drivers
     @Override protected void compute2() {
       try {
-        byte[] cs = new AutoBuffer().put(_parms).buf();
-
-        Scope.enter();
-        // Init parameters
+        long cs = _parms.checksum();
         init(true);
         // Read lock input
         _parms.read_lock_frames(DeepLearning.this);
@@ -170,23 +190,22 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
           throw H2OModelBuilderIllegalArgumentException.makeFromBuilder(DeepLearning.this);
         }
         buildModel();
+        if (isRunning()) done();                 // Job done!
         //check that _parms isn't changed during DL model training
-        byte[] cs2 = new AutoBuffer().put(_parms).buf();
-        assert(Arrays.equals(cs, cs2));
-
-        done();                 // Job done!
-//      if (n_folds > 0) CrossValUtils.crossValidate(this);
+        long cs2 = _parms.checksum();
+        assert(cs == cs2);
       } catch( Throwable t ) {
         Job thisJob = DKV.getGet(_key);
         if (thisJob._state == JobState.CANCELLED) {
           Log.info("Job cancelled by user.");
         } else {
+          t.printStackTrace();
           failed(t);
           throw t;
         }
       } finally {
+        updateModelOutput();
         _parms.read_unlock_frames(DeepLearning.this);
-        Scope.exit();
       }
       tryComplete();
     }
@@ -200,7 +219,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
       Scope.enter();
       DeepLearningModel cp = null;
       if (_parms._checkpoint == null) {
-        cp = new DeepLearningModel(dest(), _parms, new DeepLearningModel.DeepLearningModelOutput(DeepLearning.this), _train, _valid);
+        cp = new DeepLearningModel(dest(), _parms, new DeepLearningModel.DeepLearningModelOutput(DeepLearning.this), _train, _valid, nclasses());
         cp.model_info().initializeMembers();
       } else {
         final DeepLearningModel previous = DKV.getGet(_parms._checkpoint);
@@ -209,29 +228,38 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         new ProgressUpdate("Resuming from checkpoint").fork(_progressKey);
 
         if( isClassifier() != previous._output.isClassifier() )
-          throw new IllegalArgumentException("Response type must be the same as for the checkpointed model.");
+          throw new H2OIllegalArgumentException("Response type must be the same as for the checkpointed model.");
         if( isSupervised() != previous._output.isSupervised() )
-          throw new IllegalArgumentException("Model type must be the same as for the checkpointed model.");
+          throw new H2OIllegalArgumentException("Model type must be the same as for the checkpointed model.");
 
         // check the user-given arguments for consistency
-        DeepLearningParameters oldP = previous._parms; //user-given parameters for checkpointed model
+        DeepLearningParameters oldP = previous._parms; //sanitized parameters for checkpointed model
         DeepLearningParameters newP = _parms; //user-given parameters for restart
-        DeepLearningParameters.Sanity.checkpoint(oldP, newP);
 
+        DeepLearningParameters oldP2 = (DeepLearningParameters)oldP.clone();
+        DeepLearningParameters newP2 = (DeepLearningParameters)newP.clone();
+        DeepLearningParameters.Sanity.modifyParms(oldP, oldP2, nclasses()); //sanitize the user-given parameters
+        DeepLearningParameters.Sanity.modifyParms(newP, newP2, nclasses()); //sanitize the user-given parameters
+        DeepLearningParameters.Sanity.checkpoint(oldP2, newP2);
+
+        DataInfo dinfo;
         try {
-          final DataInfo dinfo = makeDataInfo(_train, _valid, _parms);
+          dinfo = makeDataInfo(_train, _valid, _parms);
           DKV.put(dinfo);
           cp = new DeepLearningModel(dest(), _parms, previous, false, dinfo);
           cp.write_lock(self());
 
           if (!Arrays.equals(cp._output._names, previous._output._names)) {
-            throw new IllegalArgumentException("Predictor columns of the training data must be the same as for the checkpointed model. Check ignored columns.");
+            throw new H2OIllegalArgumentException("The columns of the training data must be the same as for the checkpointed model. Check ignored columns (or disable ignore_const_cols).");
           }
           if (!Arrays.deepEquals(cp._output._domains, previous._output._domains)) {
-            throw new IllegalArgumentException("Categorical factor levels of the training data must be the same as for the checkpointed model.");
+            throw new H2OIllegalArgumentException("Categorical factor levels of the training data must be the same as for the checkpointed model.");
           }
           if (dinfo.fullN() != previous.model_info().data_info().fullN()) {
-            throw new IllegalArgumentException("Total number of predictors is different than for the checkpointed model.");
+            throw new H2OIllegalArgumentException("Total number of predictors is different than for the checkpointed model.");
+          }
+          if (_parms._epochs <= previous.epoch_counter) {
+            throw new H2OIllegalArgumentException("Total number of epochs must be larger than the number of epochs already trained for the checkpointed model (" + previous.epoch_counter + ").");
           }
 
           // these are the mutable parameters that are to be used by the model (stored in model_info._parms)
@@ -239,18 +267,17 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
           assert (actualNewP != previous.model_info().get_params());
           assert (actualNewP != newP);
           assert (actualNewP != oldP);
-          DeepLearningParameters.Sanity.update(actualNewP, newP, isClassifier());
+          DeepLearningParameters.Sanity.update(actualNewP, newP, nclasses());
 
-          actualNewP._epochs += previous.epoch_counter; //add new epochs to existing model
-          Log.info("Adding " + String.format("%.3f", previous.epoch_counter) + " epochs from the checkpointed model.");
-
-          if (actualNewP._nfolds != 0) {
-            Log.info("Disabling cross-validation: Not supported when resuming training from a checkpoint.");
-
-            H2O.unimpl("writing to n_folds field needs to be uncommented");
-            // actualNewP._n_folds = 0;
-          }
+          Log.info("Continuing training after " + String.format("%.3f", previous.epoch_counter) + " epochs from the checkpointed model.");
           cp.update(self());
+        } catch (H2OIllegalArgumentException ex){
+          if (cp != null) {
+            cp.unlock(self());
+            cp.delete();
+            cp = null;
+          }
+          throw ex;
         } finally {
           if (cp != null) cp.unlock(self());
         }
@@ -259,29 +286,32 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
 
       // clean up, but don't delete the model and the training/validation model metrics
       List<Key> keep = new ArrayList<>();
-      keep.add(dest());
-      keep.add(cp.model_info().data_info()._key);
-      // Do not remove training metrics
-      keep.add(cp._output._training_metrics._key);
-      // And validation model metrics
-      if (cp._output._validation_metrics != null) {
-        keep.add(cp._output._validation_metrics._key);
-      }
-      if (cp._output.weights != null && cp._output.biases != null) {
-        for (Key k : Arrays.asList(cp._output.weights)) {
-          keep.add(k);
-          for (Vec vk : ((Frame) DKV.getGet(k)).vecs()) {
-            keep.add(vk._key);
+      try {
+        keep.add(dest());
+        keep.add(cp.model_info().data_info()._key);
+        // Do not remove training metrics
+        keep.add(cp._output._training_metrics._key);
+        // And validation model metrics
+        if (cp._output._validation_metrics != null) {
+          keep.add(cp._output._validation_metrics._key);
+        }
+        if (cp._output.weights != null && cp._output.biases != null) {
+          for (Key k : Arrays.asList(cp._output.weights)) {
+            keep.add(k);
+            for (Vec vk : ((Frame) DKV.getGet(k)).vecs()) {
+              keep.add(vk._key);
+            }
+          }
+          for (Key k : Arrays.asList(cp._output.biases)) {
+            keep.add(k);
+            for (Vec vk : ((Frame) DKV.getGet(k)).vecs()) {
+              keep.add(vk._key);
+            }
           }
         }
-        for (Key k : Arrays.asList(cp._output.biases)) {
-          keep.add(k);
-          for (Vec vk : ((Frame) DKV.getGet(k)).vecs()) {
-            keep.add(vk._key);
-          }
-        }
+      } finally {
+        Scope.exit(keep.toArray(new Key[0]));
       }
-      Scope.exit(keep.toArray(new Key[0]));
     }
 
 
@@ -304,8 +334,11 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         model.write_lock(self());
         new ProgressUpdate("Setting up training data...").fork(_progressKey);
         final DeepLearningParameters mp = model.model_info().get_params();
-        Frame tra_fr = new Frame(Key.make(mp.train()._key.toString()), _train.names(), _train.vecs());
-        Frame val_fr = _valid != null ? new Frame(Key.make(mp.valid()._key.toString()), _valid.names(), _valid.vecs()) : null;
+
+        // temporary frames of the same "name" as the orig _train/_valid (asking the parameter's Key, not the actual frame)
+        // Note: don't put into DKV or they would overwrite the _train/_valid frames!
+        Frame tra_fr = new Frame(mp._train, _train.names(), _train.vecs());
+        Frame val_fr = _valid != null ? new Frame(mp._valid,_valid.names(), _valid.vecs()) : null;
 
         train = tra_fr;
         if (mp._force_load_balance) {
@@ -329,6 +362,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         }
         model.training_rows = train.numRows();
         trainScoreFrame = sampleFrame(train, mp._score_training_samples, mp._seed); //training scoring dataset is always sampled uniformly from the training dataset
+        if( trainScoreFrame != train ) _delete_me.add(trainScoreFrame);
 
         if (!_parms._quiet_mode) Log.info("Number of chunks of the training data: " + train.anyVec().nChunks());
         if (val_fr != null) {
@@ -341,6 +375,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
           } else {
             new ProgressUpdate("Sampling validation data...").fork(_progressKey);
             validScoreFrame = sampleFrame(val_fr, mp._score_validation_samples, mp._seed +1);
+            if( validScoreFrame != val_fr ) _delete_me.add(validScoreFrame);
           }
           if (mp._force_load_balance) {
             new ProgressUpdate("Balancing class distribution of validation data...").fork(_progressKey);
@@ -353,64 +388,66 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         model.actual_train_samples_per_iteration = computeTrainSamplesPerIteration(mp, train.numRows(), model);
         // Determine whether shuffling is enforced
         if(mp._replicate_training_data && (model.actual_train_samples_per_iteration == train.numRows()*(mp._single_node_mode ?1:H2O.CLOUD.size())) && !mp._shuffle_training_data && H2O.CLOUD.size() > 1 && !mp._reproducible) {
-          Log.info("Enabling training data shuffling, because all nodes train on the full dataset (replicated training data).");
+          if (!mp._quiet_mode)
+            Log.info("Enabling training data shuffling, because all nodes train on the full dataset (replicated training data).");
           mp._shuffle_training_data = true;
         }
-        if(!mp._shuffle_training_data && mp._balance_classes && !mp._reproducible) {
-          Log.info("Enabling training data shuffling, because balance_classes is enabled.");
+        if(!mp._shuffle_training_data && model.actual_train_samples_per_iteration == train.numRows() && train.anyVec().nChunks()==1) {
+          if (!mp._quiet_mode)
+            Log.info("Enabling training data shuffling to avoid training rows in the same order over and over (no Hogwild since there's only 1 chunk).");
           mp._shuffle_training_data = true;
         }
 
-        if (!mp._quiet_mode && mp._diagnostics) Log.info("Initial model:\n" + model.model_info());
+//        if (!mp._quiet_mode) Log.info("Initial model:\n" + model.model_info());
         if (_parms._autoencoder) {
           new ProgressUpdate("Scoring null model of autoencoder...").fork(_progressKey);
-          model.doScoring(trainScoreFrame, validScoreFrame, self(), null, 0); //get the null model reconstruction error
+          if (!mp._quiet_mode)
+            Log.info("Scoring the null model of the autoencoder.");
+          model.doScoring(trainScoreFrame, validScoreFrame, self(), null, 0, false); //get the null model reconstruction error
         }
         // put the initial version of the model into DKV
         model.update(self());
-        model._timeLastScoreEnter = System.currentTimeMillis(); //to keep track of time per iteration, must be called before first call to doScoring
+        model._timeLastIterationEnter = System.currentTimeMillis();
         Log.info("Starting to train the Deep Learning model.");
         new ProgressUpdate("Training...").fork(_progressKey);
 
         //main loop
-        int iteration = 0;
+        int iteration = 1;
         do {
           model.set_model_info(mp._epochs == 0 ? model.model_info() : H2O.CLOUD.size() > 1 && mp._replicate_training_data ? (mp._single_node_mode ?
-                  new DeepLearningTask2(self(), train, model.model_info(), rowFraction(train, mp, model), ++iteration).doAll(Key.make(H2O.SELF)).model_info() : //replicated data + single node mode
-                  new DeepLearningTask2(self(), train, model.model_info(), rowFraction(train, mp, model), ++iteration).doAllNodes(             ).model_info()): //replicated data + multi-node mode
-                  new DeepLearningTask (self(),        model.model_info(), rowFraction(train, mp, model), ++iteration).doAll     (    train    ).model_info()); //distributed data (always in multi-node mode)
+                  new DeepLearningTask2(self(), train, model.model_info(), rowFraction(train, mp, model), iteration).doAll(Key.make(H2O.SELF)).model_info() : //replicated data + single node mode
+                  new DeepLearningTask2(self(), train, model.model_info(), rowFraction(train, mp, model), iteration).doAllNodes(             ).model_info()): //replicated data + multi-node mode
+                  new DeepLearningTask (self(),        model.model_info(), rowFraction(train, mp, model), iteration).doAll     (    train    ).model_info()); //distributed data (always in multi-node mode)
         }
-        while (model.doScoring(trainScoreFrame, validScoreFrame, self(), _progressKey, iteration));
+        while (isRunning() && model.doScoring(trainScoreFrame, validScoreFrame, self(), _progressKey, iteration++, false));
 
         // replace the model with the best model so far (if it's better)
-        if (!isCancelledOrCrashed() && _parms._overwrite_with_best_model && model.actual_best_model_key != null && _parms._nfolds == 0) {
+        if (isRunning() && _parms._overwrite_with_best_model && model.actual_best_model_key != null && _parms._nfolds == 0) {
           DeepLearningModel best_model = DKV.getGet(model.actual_best_model_key);
-          if (best_model != null && best_model.error() < model.error() && Arrays.equals(best_model.model_info().units, model.model_info().units)) {
-            if (!_parms._quiet_mode) {
+          if (best_model != null && best_model.loss() < model.loss() && Arrays.equals(best_model.model_info().units, model.model_info().units)) {
+            if (!_parms._quiet_mode)
               Log.info("Setting the model to be the best model so far (based on scoring history).");
-            }
             DeepLearningModelInfo mi = best_model.model_info().deep_clone();
             // Don't cheat - count full amount of training samples, since that's the amount of training it took to train (without finding anything better)
             mi.set_processed_global(model.model_info().get_processed_global());
             mi.set_processed_local(model.model_info().get_processed_local());
             model.set_model_info(mi);
             model.update(self());
-            model.doScoring(trainScoreFrame, validScoreFrame, self(), _progressKey, -1);
-            assert(best_model.error() == model.error());
+            model.doScoring(trainScoreFrame, validScoreFrame, self(), _progressKey, iteration, true);
+            assert(best_model.loss() == model.loss());
           }
         }
 
         if (!_parms._quiet_mode) {
           Log.info("==============================================================================================================================================================================");
-          Log.info("Finished training the Deep Learning model (" + iteration + " Map/Reduce iterations)");
-          Log.info(model);
+          if (isCancelledOrCrashed()) {
+            Log.info("Deep Learning model training was interrupted.");
+          } else {
+            Log.info("Finished training the Deep Learning model (" + (iteration-1) + " Map/Reduce iterations)");
+            Log.info(model);
+          }
           Log.info("==============================================================================================================================================================================");
         }
-      }
-      catch(Throwable ex) {
-        model = DKV.get(dest()).get();
-        Log.info("Deep Learning model building was cancelled.");
-        throw new RuntimeException(ex);
       }
       finally {
         if (model != null) {
@@ -437,13 +474,16 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
     private Frame reBalance(final Frame fr, boolean local, final String name) {
       int chunks = (int)Math.min( 4 * H2O.NUMCPUS * (local ? 1 : H2O.CLOUD.size()), fr.numRows());
       if (fr.anyVec().nChunks() > chunks && !_parms._reproducible) {
-        Log.info("Dataset already contains " + fr.anyVec().nChunks() + " chunks. No need to rebalance.");
+        if (!_parms._quiet_mode)
+          Log.info("Dataset already contains " + fr.anyVec().nChunks() + " chunks. No need to rebalance.");
         return fr;
       } else if (_parms._reproducible) {
-        Log.warn("Reproducibility enforced - using only 1 thread - can be slow.");
+        if (!_parms._quiet_mode)
+          Log.warn("Reproducibility enforced - using only 1 thread - can be slow.");
         chunks = 1;
       }
-      if (!_parms._quiet_mode) Log.info("ReBalancing dataset into (at least) " + chunks + " chunks.");
+      if (!_parms._quiet_mode)
+        Log.info("ReBalancing dataset into (at least) " + chunks + " chunks.");
       Key newKey = Key.make(name + ".chunks" + chunks);
       RebalanceDataSet rb = new RebalanceDataSet(fr, newKey, chunks);
       H2O.submitTask(rb);
@@ -494,7 +534,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         int network_queue_length = mp._single_node_mode || H2O.CLOUD.size() == 1? 1 : 2*(int)Math.floor(Math.log(H2O.CLOUD.size())/Math.log(2));
 
         // heuristics
-        double flops_overhead_per_row = 30;
+        double flops_overhead_per_row = 50;
         if (mp._activation == DeepLearningParameters.Activation.Maxout || mp._activation == DeepLearningParameters.Activation.MaxoutWithDropout) {
           flops_overhead_per_row *= 8;
         } else if (mp._activation == DeepLearningParameters.Activation.Tanh || mp._activation == DeepLearningParameters.Activation.TanhWithDropout) {
@@ -505,8 +545,8 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         double fraction = mp._single_node_mode || H2O.CLOUD.size() == 1 ? 1e-3 : mp._target_ratio_comm_to_comp; //one single node mode, there's no model averaging effect, so less need to shorten the M/R iteration
 
         // estimate the time for communication (network) and training (compute)
-        model.time_for_communication_us = (H2O.CLOUD.size() == 1 ? 1e4 /* add 10ms for single-node */ : 0) + network_queue_length * microseconds_collective[1];
-        double time_per_row_us  = flops_overhead_per_row * model_size / (total_gflops * 1e9) / H2O.SELF._heartbeat._cpus_allowed * 1e6;
+        model.time_for_communication_us = (H2O.CLOUD.size() == 1 ? 1e4 /* add 10ms for single-node */ : 1e5 /* add 100ms for multi-node MR overhead */) + network_queue_length * microseconds_collective[1];
+        double time_per_row_us  = (flops_overhead_per_row * model_size + 10000 * model.model_info().units[0]) / (total_gflops * 1e9) / H2O.SELF._heartbeat._cpus_allowed * 1e6;
 
         // compute the optimal number of training rows per iteration
         // fraction := time_comm_us / (time_comm_us + tspi * time_per_row_us)  ==>  tspi = (time_comm_us/fraction - time_comm_us)/time_per_row_us
@@ -517,8 +557,11 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         // If the number is close to a multiple of epochs, use that -> prettier scoring
         if (tspi > numRows && Math.abs(tspi % numRows)/(double)numRows < 0.2)  tspi = tspi - tspi % numRows;
         tspi = Math.min(tspi, (long)(mp._epochs * numRows / 10)); //limit to number of epochs desired, but at least 10 iterations total
-        tspi = Math.max(1, tspi); //at least 1 point
-        model.tspiGuess = tspi;
+        if (H2O.CLOUD.size() == 1 || mp._single_node_mode) {
+          tspi = Math.min(tspi, 10*(int)(1e6/time_per_row_us)); //in single-node mode, only run for at most 10 seconds
+        }
+        tspi = Math.max(1, tspi); //at least 1 row
+        tspi = Math.min(100000*H2O.CLOUD.size(), tspi); //at most 100k rows per node for initial guess - can always relax later on
 
         if (!mp._quiet_mode) {
           Log.info("Auto-tuning parameter 'train_samples_per_iteration':");
@@ -534,6 +577,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningPar
         tspi = Math.max(1, Math.min(tspi, (long) (mp._epochs * numRows)));
       }
       assert(tspi != 0 && tspi != -1 && tspi != -2 && tspi >= 1);
+      model.tspiGuess = tspi;
       return tspi;
     }
 

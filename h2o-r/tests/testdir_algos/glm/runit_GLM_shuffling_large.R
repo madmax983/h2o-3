@@ -5,13 +5,13 @@
 ##
 
 
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../../h2o-runit.R')
 
-test <- function(conn) {
+
+
+test <- function() {
     print("Reading in Arcene training data for binomial modeling.")
-        arcene.train.full = h2o.uploadFile(conn, locate("smalldata/arcene/shuffle_test_version/arcene.csv"), destination_frame="arcene.train.full", header=FALSE)
-        arcene.train.full_shuffled = h2o.uploadFile(conn, locate("smalldata/arcene/shuffle_test_version/arcene_shuffled.csv"), destination_frame="arcene.train.full_shuffled", header=FALSE)
+        arcene.train.full = h2o.uploadFile(locate("smalldata/arcene/shuffle_test_version/arcene.csv"), destination_frame="arcene.train.full", header=FALSE)
+        arcene.train.full_shuffled = h2o.uploadFile(locate("smalldata/arcene/shuffle_test_version/arcene_shuffled.csv"), destination_frame="arcene.train.full_shuffled", header=FALSE)
     
     print("Shuffle rows of dataset.")
         arcene.train.full_shuffled = h2o.assign(arcene.train.full[sample(nrow(arcene.train.full),replace=F),],"arcene.train.full_shuffled")
@@ -33,7 +33,7 @@ test <- function(conn) {
             diff = h2o.model@model$coefficients - h2o.model.s@model$coefficients
             stopifnot(diff < 5e-10)
 
-    testEnd()
+    
 }
 
 doTest("Testing glm consistency on 1 chunk dataset with and without shuffling rows.", test)

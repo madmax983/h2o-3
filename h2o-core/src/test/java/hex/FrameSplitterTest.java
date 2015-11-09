@@ -23,7 +23,7 @@ public class FrameSplitterTest extends TestUtil {
     Frame[] splits  = null;
 
     try {
-      dataset = frame(ar("COL1"), ear(0, 1, 2, 3, 4, 5, 6, 7, 8, 9));
+      dataset = ArrayUtils.frame(ar("COL1"), ear(0, 1, 2, 3, 4, 5, 6, 7, 8, 9));
       FrameSplitter fs = new FrameSplitter(dataset, ratios, generateNumKeys(dataset._key, ratios.length+1), null);
       H2O.submitTask(fs).join();
       splits = fs.getResult();
@@ -125,7 +125,7 @@ public class FrameSplitterTest extends TestUtil {
     Assert.assertEquals(150, numRows);
     // Perform frame split via API
     try {
-      SplitFrame sf = new SplitFrame(Key.make());
+      SplitFrame sf = new SplitFrame();
       sf.dataset = f;
       sf.ratios = new double[] { 0.5, 0.5 };
       sf.destination_frames = new Key[] { Key.make("train.hex"), Key.make("test.hex")};

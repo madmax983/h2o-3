@@ -1,31 +1,19 @@
 #----------------------------------------------------------------------
 # Purpose:  This test exercises HDFS operations from R.
 #----------------------------------------------------------------------
+test <-
+function() {
 
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../h2o-runit-hadoop.R')
-
-ipPort <- get_args(commandArgs(trailingOnly = TRUE))
-myIP   <- ipPort[[1]]
-myPort <- ipPort[[2]]
 hdfs_name_node <- Sys.getenv(c("NAME_NODE"))
 print(hdfs_name_node)
-
-library(RCurl)
-library(h2o)
-library(testthat)
-
-#----------------------------------------------------------------------
-
-heading("BEGIN TEST")
-conn <- h2o.init(ip=myIP, port=myPort, startH2O = FALSE)
 
 hdfs_data_file = "/datasets/runit/covtype.data"
 hdfs_tmp_dir = "/tmp/runit"
 
 url <- sprintf("hdfs://%s%s", hdfs_name_node, hdfs_data_file)
 model_path <- sprintf("hdfs://%s%s", hdfs_name_node, hdfs_tmp_dir)
-data.hex <- h2o.importFile(conn, url)
+data.hex <- h2o.importFile(url)
+
 data.hex[,55] <- ifelse(data.hex[,55] == 1, 1, 0)
 print(summary(data.hex))
 
@@ -48,5 +36,7 @@ covtype.glm
 #expect_equal(covtype.glm@model, covtype.glm2@model)
 #expect_equal(length(covtype.glm@xval), length(covtype.glm2@xval))
 
-PASS_BANNER()
+}
+
+doTest("Test", test)
 

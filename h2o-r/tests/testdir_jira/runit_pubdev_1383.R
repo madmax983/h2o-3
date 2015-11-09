@@ -1,11 +1,11 @@
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../h2o-runit.R')
 
-test.pubdev.1383 <- function(conn) {
+
+
+test.pubdev.1383 <- function() {
   k <- 10
   Log.info("Importing fgl_tr.csv...")
   fgl.dat <- read.csv(locate("smalldata/pca_test/fgl_tr.csv"))
-  fgl.hex <- h2o.importFile(conn, locate("smalldata/pca_test/fgl_tr.csv"))
+  fgl.hex <- h2o.importFile(locate("smalldata/pca_test/fgl_tr.csv"))
   print(summary(fgl.hex))
   
   Log.info("Reshuffling R data to match H2O...")
@@ -24,12 +24,12 @@ test.pubdev.1383 <- function(conn) {
   checkSignedCols(eigvecH2O, eigvecR, tolerance = 1e-5)
   
   impR <- summary(fitR)$importance
-  impH2O <- fitH2O@model$pc_importance
+  impH2O <- fitH2O@model$importance
   Log.info("R PC Importance:"); print(impR[,1:k])
   Log.info("H2O PC Importance:"); print(impH2O)
   expect_equal(as.numeric(impR[1,1:k]), as.numeric(impH2O[1,]), tolerance = 1e-6)
   
-  testEnd()
+  
 }
 
 doTest("PUBDEV-1383: Compare numerical accuracy of H2O and R PCA", test.pubdev.1383)

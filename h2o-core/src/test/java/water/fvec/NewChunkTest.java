@@ -17,16 +17,16 @@ public class NewChunkTest extends TestUtil {
   Vec vec;
 
   void pre() {
-    av = new AppendableVec(Vec.newKey());
+    av = new AppendableVec(Vec.newKey(), Vec.T_NUM);
     nc = new NewChunk(av, 0);
   }
   void post() {
     cc = nc.compress();
-    av._espc[0] = K; //HACK
+    av._tmp_espc[0] = K; //HACK
     cc._start = 0; //HACK
     cc._cidx = 0; // HACK as well
     Futures fs = new Futures();
-    vec = cc._vec = av.close(fs);
+    vec = cc._vec = av.layout_and_close(fs);
     fs.blockForPending();
     assert(DKV.get(vec._key)!=null); //only the vec header is in DKV, the chunk is not
   }

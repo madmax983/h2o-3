@@ -1,9 +1,9 @@
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../../h2o-runit.R')
 
-test.slice.colTail <- function(conn) {
+
+
+test.slice.colTail <- function() {
   Log.info("Importing iris.csv data...\n")
-  iris.hex <- h2o.importFile(conn, locate("smalldata/iris/iris_wheader.csv"),destination_frame="iris.hex")
+  iris.hex <- h2o.importFile(locate("smalldata/iris/iris_wheader.csv"),destination_frame="iris.hex")
   
   iris_nrows <- nrow(iris.hex)
   iris_ncols <- ncol(iris.hex)
@@ -19,7 +19,7 @@ test.slice.colTail <- function(conn) {
   sepalLength <- iris.hex[,1]
   
   Log.info("Slicing out the first column still gives an h2o object.")
-  expect_that(sepalLength, is_a("H2OFrame"))
+  expect_that(sepalLength, is_a("Frame"))
   print(head(sepalLength))
   
   Log.info("Tail of sepalLength is:\n")
@@ -38,7 +38,7 @@ test.slice.colTail <- function(conn) {
   
   tryCatch(iris.hex[1,1],error=function(e) print(paste("Could not perform head(iris.hex[1,1]",e)))
 
-  testEnd()
+  
 }
 
 doTest("Slice Test: Tail of a column sliced out ", test.slice.colTail)

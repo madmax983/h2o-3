@@ -1,12 +1,16 @@
 import sys
-sys.path.insert(1, "../../")
+sys.path.insert(1,"../../")
 import h2o
+from tests import pyunit_utils
 
-def vec_show(ip,port):
-    # Connect to h2o
-    h2o.init(ip,port)
 
-    iris = h2o.import_frame(path=h2o.locate("smalldata/iris/iris_wheader.csv"))
+
+
+def vec_show():
+    
+    
+
+    iris = h2o.import_file(path=pyunit_utils.locate("smalldata/iris/iris_wheader.csv"))
     print "iris:"
     iris.show()
 
@@ -23,5 +27,9 @@ def vec_show(ip,port):
 
     iris[2].show()
 
+
+
 if __name__ == "__main__":
-    h2o.run_test(sys.argv, vec_show)
+    pyunit_utils.standalone_test(vec_show)
+else:
+    vec_show()

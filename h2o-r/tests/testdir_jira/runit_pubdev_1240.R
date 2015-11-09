@@ -1,7 +1,7 @@
-setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
-source('../h2o-runit.R')
 
-test.merge.examples <- function(conn) {
+
+
+test.merge.examples <- function() {
   census_path <- locate("smalldata/chicago/chicagoCensus.csv")
   
   Log.info("Import Chicago census data...")
@@ -33,14 +33,14 @@ test.merge.examples <- function(conn) {
                                 HourOfDay = c(23, 23),
                                 Weekend = c(1, 1),
                                 Season = c(1, 1))
-  crimeExamples <- as.h2o(crimeExamples.r, conn)
+  crimeExamples <- as.h2o(crimeExamples.r)
   names(crimeExamples) <- make.names(names(crimeExamples))
   print(head(crimeExamples))
   
   Log.info("Merge created crime examples with Chicago census data")
   crimeExamplesMerge <- h2o.merge(crimeExamples, census)
   print(summary(crimeExamplesMerge))
-  testEnd()
+  
 }
 
 doTest("Merging H2O Frames causes IllegalArgumentException", test.merge.examples)

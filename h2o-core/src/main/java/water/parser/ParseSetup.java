@@ -18,14 +18,15 @@ import java.util.Arrays;
 import java.util.HashSet;
 
 /**
-* Configuration and base guesser for a parse;
-*/
+ * Configuration and base guesser for a parse;
+ */
 public final class ParseSetup extends Iced {
   public static final byte GUESS_SEP = -1;
   public static final int NO_HEADER = -1;
   public static final int GUESS_HEADER = 0;
   public static final int HAS_HEADER = 1;
   public static final int GUESS_COL_CNT = -1;
+
   ParserType _parse_type;     // CSV, XLS, XSLX, SVMLight, Auto, ARFF
   byte _separator;            // Field separator, usually comma ',' or TAB or space ' '
   // Whether or not single-quotes quote a field.  E.g. how do we parse:
@@ -117,21 +118,21 @@ public final class ParseSetup extends Iced {
       types[i] = Vec.TYPE_STR[_column_types[i]];
     return types;
   }
+  public byte[] getColumnTypes() { return _column_types; }
 
   public static byte[] strToColumnTypes(String[] strs) {
     if (strs == null) return null;
     byte[] types = new byte[strs.length];
     for(int i=0; i< types.length;i++) {
       switch (strs[i].toLowerCase()) {
-        case "unknown": types[i] = Vec.T_BAD; break;
-        case "uuid": types[i] = Vec.T_UUID; break;
-        case "string": types[i] = Vec.T_STR; break;
-        case "numeric": types[i] = Vec.T_NUM; break;
-        case "enum": types[i] = Vec.T_ENUM; break;
-        case "time": types[i] = Vec.T_TIME; break;
-        default: types[i] = Vec.T_BAD;
-          throw new H2OIllegalArgumentException("Provided column type "+ strs[i] + " is unknown. ",
-                  "Cannot proceed with parse due to invalid argument.");
+      case "unknown": types[i] = Vec.T_BAD;  break;
+      case "uuid":    types[i] = Vec.T_UUID; break;
+      case "string":  types[i] = Vec.T_STR;  break;
+      case "numeric": types[i] = Vec.T_NUM;  break;
+      case "enum":    types[i] = Vec.T_CAT;  break;
+      case "time":    types[i] = Vec.T_TIME; break;
+      default:        types[i] = Vec.T_BAD;
+        throw new H2OIllegalArgumentException("Provided column type "+ strs[i] + " is unknown.  Cannot proceed with parse due to invalid argument.");
       }
     }
     return types;
@@ -139,10 +140,10 @@ public final class ParseSetup extends Iced {
 
   public Parser parser(Key jobKey) {
     switch(_parse_type) {
-      case CSV:      return new      CsvParser(this, jobKey);
-      case XLS:      return new      XlsParser(this, jobKey);
-      case SVMLight: return new SVMLightParser(this, jobKey);
-      case ARFF:     return new     ARFFParser(this, jobKey);
+      case CSV:      return new      CsvParser(this,jobKey);
+      case XLS:      return new      XlsParser(this,jobKey);
+      case SVMLight: return new SVMLightParser(this,jobKey);
+      case ARFF:     return new     ARFFParser(this,jobKey);
     }
     throw new H2OIllegalArgumentException("Unknown file type.  Parse cannot be completed.",
             "Attempted to invoke a parser for ParseType:" + _parse_type +", which doesn't exist.");
@@ -154,8 +155,7 @@ public final class ParseSetup extends Iced {
     if( _column_names ==null ) return conflictingNames;
     HashSet<String> uniqueNames = new HashSet<>();
     for( String n : _column_names)
-      if (n != null)
-        (uniqueNames.contains(n) ? conflictingNames : uniqueNames).add(n);
+      (uniqueNames.contains(n) ? conflictingNames : uniqueNames).add(n);
     return conflictingNames;
   }
 
@@ -164,7 +164,7 @@ public final class ParseSetup extends Iced {
   }
 
   static boolean allStrings(String [] line){
-    ValueString str = new ValueString();
+    BufferedString str = new BufferedString();
     for( String s : line ) {
       try {
         Double.parseDouble(s);
@@ -211,13 +211,13 @@ public final class ParseSetup extends Iced {
     GuessSetupTsk t = new GuessSetupTsk(userSetup);
     t.doAll(fkeys).getResult();
 
-      //Calc chunk-size
-      Iced ice = DKV.getGet(fkeys[0]);
-      if (ice instanceof Frame && ((Frame) ice).vec(0) instanceof UploadFileVec) {
-        t._gblSetup._chunk_size = FileVec.DFLT_CHUNK_SIZE;
-      } else {
-        t._gblSetup._chunk_size = FileVec.calcOptimalChunkSize(t._totalParseSize, t._gblSetup._number_columns);
-      }
+    //Calc chunk-size
+    Iced ice = DKV.getGet(fkeys[0]);
+    if (ice instanceof Frame && ((Frame) ice).vec(0) instanceof UploadFileVec) {
+      t._gblSetup._chunk_size = FileVec.DFLT_CHUNK_SIZE;
+    } else {
+      t._gblSetup._chunk_size = FileVec.calcOptimalChunkSize(t._totalParseSize, t._gblSetup._number_columns);
+    }
 
     return t._gblSetup;
   }
@@ -276,19 +276,19 @@ public final class ParseSetup extends Iced {
         else  // avoid numerical distortion of file size when not compressed
           _totalParseSize += bv.length();
 
-        // Check for supported character encodings
-        checkCharEncoding(bits);
+        // Check for supported encodings
+        checkEncoding(bits);
 
         // only preview 1 DFLT_CHUNK_SIZE for ByteVecs, UploadFileVecs, compressed, and small files
 /*        if (ice instanceof ByteVec
                 || ((Frame)ice).vecs()[0] instanceof UploadFileVec
                 || bv.length() <= FileVec.DFLT_CHUNK_SIZE
                 || decompRatio > 1.0) { */
-          try {
-            _gblSetup = guessSetup(bits, _userSetup);
-          } catch (H2OParseException pse) {
-            throw new H2OParseSetupException(key, pse);
-          }
+        try {
+          _gblSetup = guessSetup(bits, _userSetup);
+        } catch (H2OParseException pse) {
+          throw new H2OParseSetupException(key, pse);
+        }
 /*        } else { // file is aun uncompressed NFSFileVec or HDFSFileVec & larger than the DFLT_CHUNK_SIZE
           FileVec fv = (FileVec) ((Frame) ice).vecs()[0];
           // reset chunk size to 1M (uncompressed)
@@ -477,13 +477,14 @@ public final class ParseSetup extends Iced {
     int sep = n.lastIndexOf(java.io.File.separatorChar);
     if( sep > 0 ) n = n.substring(sep+1);
     int dot = n.lastIndexOf('.');
-    while (dot > 0 && (n.endsWith("zip")
-              || n.endsWith("gz")
-              || n.endsWith("csv")
-              || n.endsWith("xls")
-              || n.endsWith("txt")
-              || n.endsWith("svm")
-              || n.endsWith("arff"))) {
+    while ( dot > 0 &&
+            (n.endsWith("zip")
+            || n.endsWith("gz")
+            || n.endsWith("csv")
+            || n.endsWith("xls")
+            || n.endsWith("txt")
+            || n.endsWith("svm")
+            || n.endsWith("arff"))) {
       n = n.substring(0, dot);
       dot = n.lastIndexOf('.');
     }
@@ -517,7 +518,7 @@ public final class ParseSetup extends Iced {
    *
    * @param bits data to be examined for encoding
    */
-  private static final void checkCharEncoding(byte[] bits) {
+  private static final void checkEncoding(byte[] bits) {
     if (bits.length >= 2) {
       if ((bits[0] == (byte) 0xff && bits[1] == (byte) 0xfe) /* UTF-16, little endian */ ||
               (bits[0] == (byte) 0xfe && bits[1] == (byte) 0xff) /* UTF-16, big endian */) {
@@ -525,4 +526,55 @@ public final class ParseSetup extends Iced {
       }
     }
   }
+
+  public ParseSetup setParseType(ParserType parse_type) {
+    this._parse_type = parse_type;
+    return this;
+  }
+
+  public ParseSetup setSeparator(byte separator) {
+    this._separator = separator;
+    return this;
+  }
+
+  public ParseSetup setSingleQuotes(boolean single_quotes) {
+    this._single_quotes = single_quotes;
+    return this;
+  }
+
+  public ParseSetup setCheckHeader(int check_header) {
+    this._check_header = check_header;
+    return this;
+  }
+
+  public ParseSetup setNumberColumns(int number_columns) {
+    this._number_columns = number_columns;
+    return this;
+  }
+
+  public ParseSetup setColumnNames(String[] column_names) {
+    this._column_names = column_names;
+    return this;
+  }
+
+  public ParseSetup setColumnTypes(byte[] column_types) {
+    this._column_types = column_types;
+    return this;
+  }
+
+  public ParseSetup setDomains(String[][] domains) {
+    this._domains = domains;
+    return this;
+  }
+
+  public ParseSetup setNAStrings(String[][] na_strings) {
+    this._na_strings = na_strings;
+    return this;
+  }
+
+  public ParseSetup setChunkSize(int chunk_size) {
+    this._chunk_size = chunk_size;
+    return this;
+  }
+
 } // ParseSetup state class

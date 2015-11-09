@@ -1,15 +1,21 @@
 package water.serial;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+
 import water.H2O;
 import water.Key;
 import water.Keyed;
 import water.persist.Persist;
 import water.util.FileUtils;
 import water.util.Log;
-
-import java.io.*;
-import java.net.URI;
-import java.util.*;
 
 /**
  * Object tree serializer.
@@ -44,6 +50,9 @@ public class ObjectTreeBinarySerializer implements Serializer<List<Key>, URI> {
   public ObjectTreeBinarySerializer() {
     this(true, true, true);
   }
+  public ObjectTreeBinarySerializer(boolean overrideFile) {
+    this(true, true, overrideFile);
+  }
   public ObjectTreeBinarySerializer(boolean dkvPutAfterLoad, boolean overrideInDkv, boolean overrideFile) {
     this.dkvPutAfterLoad = dkvPutAfterLoad;
     this.overrideInDkv = overrideInDkv;
@@ -53,12 +62,24 @@ public class ObjectTreeBinarySerializer implements Serializer<List<Key>, URI> {
   @Override
   public void save(List<Key> objectTree, URI outputDir) throws IOException {
     assert outputDir.getQuery() == null : "Query parameters are not allowed in URI.";
+    if (outputDir.toString().contains("~")) {
+      throw new IllegalArgumentException("Directory " + outputDir + " cannot contain '~', please specify an absolute path (for the H2O cluster file system).");
+    }
     // Get persist manager for given output URI
     Persist persist = H2O.getPM().getPersistForURI(outputDir);
     // Create the destination folder
     if (!persist.mkdirs(outputDir.toString())) {
-      Log.warn("Directory " + outputDir + " already exists.");
-    };
+      boolean targetExists = persist.exists(outputDir.toString());
+      if (overrideFile && targetExists) {
+        Log.warn("Directory " + outputDir + " already exists.");
+      } else if (overrideFile && !targetExists || !overrideFile && !targetExists) {
+        throw new IllegalArgumentException(
+            "Directory " + outputDir + " cannot be created! Check your access privileges!");
+      } else {
+        throw new IllegalArgumentException("Directory " + outputDir + " already exists but "
+                                           + "the flag for force overwrite is `false`.");
+      }
+    }
     // Step-by-step saves all files into folder
     List<String> savedFilenames = new ArrayList<>(objectTree.size());
     BinarySerializer<Keyed, URI> serial = getKeyedSerializer();

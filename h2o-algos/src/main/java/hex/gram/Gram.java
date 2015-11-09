@@ -23,7 +23,7 @@ public final class Gram extends Iced<Gram> {
   final static int MIN_TSKSZ=10000;
 
   public Gram() {_diagN = _denseN = _fullN = 0; _hasIntercept = false; }
-
+  public Gram(DataInfo dinfo) {this(dinfo.fullN(), dinfo.largestCat(), dinfo._nums, dinfo._cats,true);}
   public Gram(int N, int diag, int dense, int sparse, boolean hasIntercept) {
     _hasIntercept = hasIntercept;
     _fullN = N + (_hasIntercept?1:0);
@@ -77,7 +77,12 @@ public final class Gram extends Iced<Gram> {
   }
 
   public double get(int i, int j) {
-    if(j > i) throw new IllegalArgumentException("Gram stored as lower diagnoal matrix, j must be < i");
+    if(j > i) {
+      int k = i;
+      i = j;
+      j = k;
+//      throw new IllegalArgumentException("Gram stored as lower diagnoal matrix, j must be < i");
+    }
     if(i < _diagN)
       return(j == i)?_diag[i]:0;
     return _xx[i-_diagN][j];
@@ -785,8 +790,8 @@ public final class Gram extends Iced<Gram> {
     // nums
     for(int i = 0; i < _denseN; ++i) if(row.numVals[i] != 0) {
       final double [] mrow = _xx[i+denseRowStart];
-      final double d = w* row.numVals[i];
-      for(int j = 0; j <= i; ++j)if(row.numVals[j] != 0)
+      final double d = w * row.numVals[i];
+      for(int j = 0; j <= i; ++j) if(row.numVals[j] != 0)
         mrow[j+denseColStart] += d* row.numVals[j];
       if(_hasIntercept)
         interceptRow[i+denseColStart] += d; // intercept*x[i]
